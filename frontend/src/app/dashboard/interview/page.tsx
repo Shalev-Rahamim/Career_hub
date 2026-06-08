@@ -50,26 +50,7 @@ export default function InterviewSimulatorPage() {
   // Grading states
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
 
-  // Sample templates for testing
-  const sampleAssignmentDesc = `Home Assignment Guidelines:
-Develop a backend Cache Service in Python.
-The cache must be fast, store key-value pairs, and run on a local server.
-Requirements:
-1. Thread safety for concurrent web requests.
-2. Prevention of memory leaks under continuous operation.
-3. Resilience against downstream API outages.`;
 
-  const sampleStudentSolution = `class CacheService:
-    def __init__(self):
-        self.store = {}
-        
-    def get(self, key):
-        # Read from dictionary
-        return self.store.get(key)
-        
-    def set(self, key, value):
-        # Insert value into dictionary
-        self.store[key] = value`;
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: "desc" | "sol") => {
     const files = e.target.files;
@@ -282,19 +263,7 @@ Requirements:
         {step === 1 && (
           <div className="bg-white border border-slate-200/80 rounded-3xl p-8 shadow-xl shadow-slate-100/55 max-w-5xl mx-auto w-full space-y-6">
             
-            {/* Quick Template Loading */}
-            <div className="flex gap-2 justify-end">
-              <button
-                type="button"
-                onClick={() => {
-                  setAssignmentDescription(sampleAssignmentDesc);
-                  setSolutionText(sampleStudentSolution);
-                }}
-                className="px-4 py-2 bg-slate-50 hover:bg-slate-100 text-teal-700 border border-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
-              >
-                📄 טען מטלה ופתרון לדוגמה (Cache Service)
-              </button>
-            </div>
+
 
             {/* Two Column Layout for Description and Solution */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
