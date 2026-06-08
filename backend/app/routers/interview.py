@@ -4,6 +4,9 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 import chromadb
 import fitz # PyMuPDF
+import io
+import docx
+import pptx
 
 # LangChain imports
 from langchain_core.prompts import ChatPromptTemplate
@@ -420,8 +423,9 @@ async def evaluate_defense_answers(
 @router.post("/parse-file")
 async def parse_uploaded_file(file: UploadFile = File(...)):
     filename = file.filename.lower()
-    if not (filename.endswith(".pdf") or filename.endswith(".txt")):
-        raise HTTPException(status_code=400, detail="Only PDF and TXT files are supported")
+    valid_extensions = (".pdf", ".txt", ".docx", ".doc", ".pptx", ".ppt")
+    if not filename.endswith(valid_extensions):
+        raise HTTPException(status_code=400, detail="Only PDF, TXT, Word (.docx) and PowerPoint (.pptx) files are supported")
         
     try:
         file_bytes = await file.read()
@@ -433,6 +437,32 @@ async def parse_uploaded_file(file: UploadFile = File(...)):
             if not extracted_text.strip():
                 raise HTTPException(status_code=400, detail="Uploaded PDF is empty or could not be parsed")
             return {"text": extracted_text.strip()}
+            
+        elif filename.endswith((".docx", ".doc")):
+            doc_file = docx.Document(io.BytesIO(file_bytes))
+            paragraphs_text = [p.text for p in doc_file.paragraphs]
+            # Also extract text from tables
+            for table in doc_file.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        paragraphs_text.append(cell.text)
+            extracted_text = "\n".join(paragraphs_text)
+            if not extracted_text.strip():
+                raise HTTPException(status_code=400, detail="Uploaded Word file is empty or could not be parsed")
+            return {"text": extracted_text.strip()}
+            
+        elif filename.endswith((".pptx", ".ppt")):
+            prs = pptx.Presentation(io.BytesIO(file_bytes))
+            text_runs = []
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text:
+                        text_runs.append(shape.text)
+            extracted_text = "\n".join(text_runs)
+            if not extracted_text.strip():
+                raise HTTPException(status_code=400, detail="Uploaded PowerPoint file is empty or could not be parsed")
+            return {"text": extracted_text.strip()}
+            
         else:
             # TXT file
             text = file_bytes.decode("utf-8", errors="ignore")

@@ -102,7 +102,7 @@ Requirements:
         setSolutionText(data.text);
       }
     } catch (err: any) {
-      setError(err.message || "שגיאה בפיענוח הקובץ. אנא העלה קובץ PDF או TXT תקין.");
+      setError(err.message || "שגיאה בפיענוח הקובץ. אנא העלה קובץ PDF, TXT, Word (.docx) או PowerPoint (.pptx) תקין.");
     } finally {
       if (target === "desc") setIsLoadingDescFile(false);
       else setIsLoadingSolFile(false);
@@ -309,13 +309,13 @@ Requirements:
                     disabled={isLoadingDescFile}
                     className="text-xs font-bold text-teal-600 hover:text-teal-700 flex items-center gap-1 cursor-pointer bg-teal-50 px-2.5 py-1 rounded-lg"
                   >
-                    {isLoadingDescFile ? "מפענח..." : "📤 העלה PDF / TXT"}
+                    {isLoadingDescFile ? "מפענח..." : "📤 העלה PDF / Word / PPTX"}
                   </button>
                   <input
                     type="file"
                     ref={descFileRef}
                     onChange={(e) => handleFileUpload(e, "desc")}
-                    accept=".pdf,.txt"
+                    accept=".pdf,.txt,.docx,.doc,.pptx,.ppt"
                     className="hidden"
                   />
                 </div>
@@ -337,13 +337,13 @@ Requirements:
                     disabled={isLoadingSolFile}
                     className="text-xs font-bold text-teal-600 hover:text-teal-700 flex items-center gap-1 cursor-pointer bg-teal-50 px-2.5 py-1 rounded-lg"
                   >
-                    {isLoadingSolFile ? "מפענח..." : "📤 העלה PDF / TXT"}
+                    {isLoadingSolFile ? "מפענח..." : "📤 העלה PDF / Word / PPTX"}
                   </button>
                   <input
                     type="file"
                     ref={solFileRef}
                     onChange={(e) => handleFileUpload(e, "sol")}
-                    accept=".pdf,.txt"
+                    accept=".pdf,.txt,.docx,.doc,.pptx,.ppt"
                     className="hidden"
                   />
                 </div>
