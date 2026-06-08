@@ -54,7 +54,10 @@ class Interview(Base):
     
     interview_id = Column(String(36), primary_key=True, default=generate_uuid)
     user_id = Column(String(36), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
-    assignment_text = Column(Text, nullable=False)
+    assignment_description = Column(Text, nullable=False)
+    solution_text = Column(Text, nullable=False)
+    difficulty_level = Column(String(50), nullable=True, default="medium")
+    num_questions = Column(Integer, nullable=True, default=5)
     
     # JSON list of generated questions: [{"question_id": str, "question_text": str, "category": str}]
     questions_json = Column(JSON, nullable=True)

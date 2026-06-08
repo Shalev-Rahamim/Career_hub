@@ -41,8 +41,10 @@ class ResumeChatResponse(BaseModel):
 # --- Feature B: Interview Simulator Schemas ---
 
 class GenerateQuestionsRequest(BaseModel):
-    assignment_text: str = Field(description="The home assignment code, architecture layout, or project documentation")
-    num_questions: int = Field(default=3, description="Number of defense questions to synthesize (3-5)", ge=3, le=5)
+    assignment_description: str = Field(description="The home assignment instructions/guidelines")
+    solution_text: str = Field(description="The student's completed solution/code/documentation")
+    difficulty_level: str = Field(default="medium", description="Difficulty level: easy, medium, or hard")
+    num_questions: int = Field(default=5, description="Number of defense questions to synthesize (5-10)", ge=5, le=10)
 
 class QuestionItem(BaseModel):
     question_id: str = Field(description="Unique question identifier, e.g., q-1")
@@ -60,7 +62,8 @@ class AnswerItem(BaseModel):
 
 class EvaluateInterviewRequest(BaseModel):
     interview_id: str = Field(description="UUID of the interview simulation session")
-    assignment_text: str = Field(description="The assignment code or architecture text submitted")
+    assignment_description: str = Field(description="The home assignment instructions/guidelines")
+    solution_text: str = Field(description="The student's completed solution/code/documentation")
     answers: List[AnswerItem] = Field(description="The candidate's answers to the generated questions")
 
 

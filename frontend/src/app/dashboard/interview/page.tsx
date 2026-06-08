@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import Link from "next/link";
 
 interface Question {
@@ -25,11 +25,22 @@ interface EvaluationResult {
 
 export default function InterviewSimulatorPage() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [assignmentText, setAssignmentText] = useState("");
-  const [numQuestions, setNumQuestions] = useState(3);
+  const [assignmentDescription, setAssignmentDescription] = useState("");
+  const [solutionText, setSolutionText] = useState("");
+  const [difficultyLevel, setDifficultyLevel] = useState<"easy" | "medium" | "hard">("medium");
+  const [numQuestions, setNumQuestions] = useState(5);
+  
   const [isGenerating, setIsGenerating] = useState(false);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Loading files indicators
+  const [isLoadingDescFile, setIsLoadingDescFile] = useState(false);
+  const [isLoadingSolFile, setIsLoadingSolFile] = useState(false);
+
+  // Refs for file inputs
+  const descFileRef = useRef<HTMLInputElement>(null);
+  const solFileRef = useRef<HTMLInputElement>(null);
 
   // Simulation states
   const [interviewId, setInterviewId] = useState("");
@@ -40,27 +51,73 @@ export default function InterviewSimulatorPage() {
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
 
   // Sample templates for testing
-  const samplePythonCode = `class CacheService:
+  const sampleAssignmentDesc = `Home Assignment Guidelines:
+Develop a backend Cache Service in Python.
+The cache must be fast, store key-value pairs, and run on a local server.
+Requirements:
+1. Thread safety for concurrent web requests.
+2. Prevention of memory leaks under continuous operation.
+3. Resilience against downstream API outages.`;
+
+  const sampleStudentSolution = `class CacheService:
     def __init__(self):
         self.store = {}
         
     def get(self, key):
-        # Synchronous read, potential SPOF if store locked
+        # Read from dictionary
         return self.store.get(key)
         
     def set(self, key, value):
-        # Memory growth is unbounded, memory leak vulnerability
+        # Insert value into dictionary
         self.store[key] = value`;
 
-  const sampleDocText = `Architecture Layout:
-- Frontend: Single SPA hosted on S3.
-- Backend: Monolithic API using Flask.
-- Database: Direct connection to SQLite on a single EC2 instance.
-- Scalability plan: Scale vertically by upgrading EC2 instance size.`;
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: "desc" | "sol") => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+
+    // Show loading
+    if (target === "desc") setIsLoadingDescFile(true);
+    else setIsLoadingSolFile(true);
+    setError(null);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const response = await fetch("http://localhost:8000/api/interview/parse-file", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "קריאת הקובץ נכשלה");
+      }
+
+      const data = await response.json();
+      if (target === "desc") {
+        setAssignmentDescription(data.text);
+      } else {
+        setSolutionText(data.text);
+      }
+    } catch (err: any) {
+      setError(err.message || "שגיאה בפיענוח הקובץ. אנא העלה קובץ PDF או TXT תקין.");
+    } finally {
+      if (target === "desc") setIsLoadingDescFile(false);
+      else setIsLoadingSolFile(false);
+      // Reset input value
+      e.target.value = "";
+    }
+  };
 
   const handleStartDefense = async () => {
-    if (!assignmentText.trim()) {
-      setError("אנא הזן או העבר את קוד קורות החיים/פרויקט שלך");
+    if (!assignmentDescription.trim()) {
+      setError("אנא הזן או העלה את הנחיות המטלה");
+      return;
+    }
+    if (!solutionText.trim()) {
+      setError("אנא הזן או העלה את פתרון המטלה");
       return;
     }
 
@@ -75,13 +132,16 @@ export default function InterviewSimulatorPage() {
           "X-User-ID": "test-user-uuid-12345",
         },
         body: JSON.stringify({
-          assignment_text: assignmentText,
+          assignment_description: assignmentDescription,
+          solution_text: solutionText,
+          difficulty_level: difficultyLevel,
           num_questions: numQuestions,
         }),
       });
 
       if (!response.ok) {
-        throw new Error("נכשל בייצור שאלות הגנה מ-AI");
+        const errJson = await response.json();
+        throw new Error(errJson.detail || "נכשל בייצור שאלות הגנה מ-AI");
       }
 
       const data = await response.json();
@@ -131,7 +191,8 @@ export default function InterviewSimulatorPage() {
         },
         body: JSON.stringify({
           interview_id: interviewId,
-          assignment_text: assignmentText,
+          assignment_description: assignmentDescription,
+          solution_text: solutionText,
           answers: formattedAnswers,
         }),
       });
@@ -152,7 +213,8 @@ export default function InterviewSimulatorPage() {
 
   const handleRestart = () => {
     setStep(1);
-    setAssignmentText("");
+    setAssignmentDescription("");
+    setSolutionText("");
     setQuestions([]);
     setAnswers({});
     setEvaluation(null);
@@ -160,7 +222,7 @@ export default function InterviewSimulatorPage() {
   };
 
   return (
-    <div className="relative min-h-screen flex flex-col bg-slate-50 text-right" dir="rtl">
+    <div className="relative min-h-screen flex flex-col bg-slate-50 text-right font-sans" dir="rtl">
       {/* Background patterns */}
       <div className="absolute top-[-10%] left-[-20%] w-[600px] h-[600px] rounded-full bg-emerald-100/30 blur-3xl pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-20%] w-[500px] h-[500px] rounded-full bg-teal-100/20 blur-3xl pointer-events-none" />
@@ -195,7 +257,7 @@ export default function InterviewSimulatorPage() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-10 relative z-10 flex flex-col gap-8">
         <div>
           <h1 className="text-3xl font-black text-slate-900 mb-2">סימולטור הגנה על משימות בית</h1>
-          <p className="text-slate-500">העלו את קוד המשימה או תרשים הארכיטקטורה שלכם, ותרגלו התגוננות מפני שאלות קשות של רשי אצוות ומראיינים.</p>
+          <p className="text-slate-500">העלו את הנחיות המטלה ואת הפתרון שלכם, ותרגלו התגוננות מפני שאלות קשות של רשי אצוות ומראיינים בדרגות קושי שונות.</p>
         </div>
 
         {/* Step Progression Bar */}
@@ -216,56 +278,136 @@ export default function InterviewSimulatorPage() {
           </div>
         </div>
 
-        {/* STEP 1: Code Ingestion Form */}
+        {/* STEP 1: Dual Input Ingestion Form */}
         {step === 1 && (
-          <div className="bg-white border border-slate-200/80 rounded-3xl p-8 shadow-xl shadow-slate-100/55 max-w-4xl mx-auto w-full space-y-6">
-            <div className="space-y-3">
-              <label className="text-sm font-bold text-slate-800 block">העלו או הדביקו קוד פרויקט, עיצוב ארכיטקטורה או קובץ הגדרות</label>
-              
-              {/* Quick Template Loading */}
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setAssignmentText(samplePythonCode)}
-                  className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-lg text-xs font-semibold transition-all cursor-pointer"
-                >
-                  📄 טען קוד פייתון לדוגמה (Cache Vulnerable)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAssignmentText(sampleDocText)}
-                  className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-lg text-xs font-semibold transition-all cursor-pointer"
-                >
-                  📄 טען תרשים ארכיטקטורה לדוגמה (Flask/SPOF)
-                </button>
-              </div>
-
-              <textarea
-                value={assignmentText}
-                onChange={(e) => setAssignmentText(e.target.value)}
-                placeholder="הדביקו כאן את הקוד או מבנה המערכת שלכם..."
-                className="w-full h-80 px-4 py-3 border border-slate-200 rounded-2xl focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none transition-all text-left resize-none font-mono text-xs leading-relaxed"
-              />
+          <div className="bg-white border border-slate-200/80 rounded-3xl p-8 shadow-xl shadow-slate-100/55 max-w-5xl mx-auto w-full space-y-6">
+            
+            {/* Quick Template Loading */}
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setAssignmentDescription(sampleAssignmentDesc);
+                  setSolutionText(sampleStudentSolution);
+                }}
+                className="px-4 py-2 bg-slate-50 hover:bg-slate-100 text-teal-700 border border-slate-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                📄 טען מטלה ופתרון לדוגמה (Cache Service)
+              </button>
             </div>
 
-            {/* Questions count select */}
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-800 block">מספר שאלות הגנה מבוקש</label>
-              <div className="flex gap-3 max-w-xs">
-                {[3, 4, 5].map((n) => (
+            {/* Two Column Layout for Description and Solution */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              
+              {/* Column 1: Assignment guidelines */}
+              <div className="space-y-3 flex flex-col">
+                <div className="flex justify-between items-center">
+                  <label className="text-sm font-bold text-slate-800">1. הנחיות ודרישות המטלה (Assignment Instructions)</label>
                   <button
-                    key={n}
                     type="button"
-                    onClick={() => setNumQuestions(n)}
-                    className={`flex-1 py-2 text-sm font-bold rounded-xl border transition-all ${
-                      numQuestions === n
-                        ? "bg-teal-600 border-teal-600 text-white shadow-md shadow-teal-50"
-                        : "bg-white border-slate-200 text-slate-600 hover:border-slate-350"
-                    }`}
+                    onClick={() => descFileRef.current?.click()}
+                    disabled={isLoadingDescFile}
+                    className="text-xs font-bold text-teal-600 hover:text-teal-700 flex items-center gap-1 cursor-pointer bg-teal-50 px-2.5 py-1 rounded-lg"
                   >
-                    {n} שאלות
+                    {isLoadingDescFile ? "מפענח..." : "📤 העלה PDF / TXT"}
                   </button>
-                ))}
+                  <input
+                    type="file"
+                    ref={descFileRef}
+                    onChange={(e) => handleFileUpload(e, "desc")}
+                    accept=".pdf,.txt"
+                    className="hidden"
+                  />
+                </div>
+                <textarea
+                  value={assignmentDescription}
+                  onChange={(e) => setAssignmentDescription(e.target.value)}
+                  placeholder="הדבק כאן את הוראות המטלה, דרישות המערכת או תיאור הפרויקט שקיבלת..."
+                  className="w-full h-80 px-4 py-3 border border-slate-200 rounded-2xl focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none transition-all text-right resize-none text-sm leading-relaxed"
+                />
+              </div>
+
+              {/* Column 2: Student solution */}
+              <div className="space-y-3 flex flex-col">
+                <div className="flex justify-between items-center">
+                  <label className="text-sm font-bold text-slate-800">2. פתרון המטלה שכתבת (Your Solution)</label>
+                  <button
+                    type="button"
+                    onClick={() => solFileRef.current?.click()}
+                    disabled={isLoadingSolFile}
+                    className="text-xs font-bold text-teal-600 hover:text-teal-700 flex items-center gap-1 cursor-pointer bg-teal-50 px-2.5 py-1 rounded-lg"
+                  >
+                    {isLoadingSolFile ? "מפענח..." : "📤 העלה PDF / TXT"}
+                  </button>
+                  <input
+                    type="file"
+                    ref={solFileRef}
+                    onChange={(e) => handleFileUpload(e, "sol")}
+                    accept=".pdf,.txt"
+                    className="hidden"
+                  />
+                </div>
+                <textarea
+                  value={solutionText}
+                  onChange={(e) => setSolutionText(e.target.value)}
+                  placeholder="הדבק כאן את קוד הפתרון שלך, תיאור הארכיטקטורה שמימשת או קובץ הטקסט של הפרויקט..."
+                  className="w-full h-80 px-4 py-3 border border-slate-200 rounded-2xl focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none transition-all text-left font-mono text-xs leading-relaxed resize-none"
+                  dir="ltr"
+                />
+              </div>
+            </div>
+
+            {/* Wizard options: Difficulty and Questions Count */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4 border-t border-slate-100">
+              
+              {/* Difficulty Level Selector */}
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-800 block">רמת קושי של שאלות ההגנה</label>
+                <div className="flex gap-3 max-w-md">
+                  {(["easy", "medium", "hard"] as const).map((level) => {
+                    const label = level === "easy" ? "קל" : level === "medium" ? "בינוני" : "קשה";
+                    const color = level === "easy" ? "hover:border-emerald-350" : level === "medium" ? "hover:border-amber-350" : "hover:border-red-350";
+                    const activeColor = level === "easy" ? "bg-emerald-600 border-emerald-600 text-white shadow-emerald-50" :
+                                        level === "medium" ? "bg-amber-500 border-amber-500 text-white shadow-amber-50" :
+                                        "bg-red-600 border-red-600 text-white shadow-red-50";
+                    
+                    return (
+                      <button
+                        key={level}
+                        type="button"
+                        onClick={() => setDifficultyLevel(level)}
+                        className={`flex-1 py-2.5 text-sm font-bold rounded-xl border transition-all cursor-pointer ${
+                          difficultyLevel === level
+                            ? `${activeColor} shadow-md`
+                            : `bg-white border-slate-200 text-slate-600 ${color}`
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Questions count select */}
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-800 block">מספר שאלות הגנה מבוקש (5 עד 10 שאלות)</label>
+                <div className="flex gap-2 flex-wrap">
+                  {[5, 6, 7, 8, 9, 10].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setNumQuestions(n)}
+                      className={`w-12 h-10 flex items-center justify-center text-sm font-bold rounded-xl border transition-all cursor-pointer ${
+                        numQuestions === n
+                          ? "bg-teal-600 border-teal-600 text-white shadow-md shadow-teal-50"
+                          : "bg-white border-slate-200 text-slate-600 hover:border-slate-350"
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -281,14 +423,14 @@ export default function InterviewSimulatorPage() {
             {isGenerating ? (
               <div className="bg-teal-50/50 border border-teal-100 rounded-2xl p-6 flex flex-col items-center justify-center gap-3">
                 <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-teal-600"></div>
-                <p className="text-teal-800 font-bold text-sm">מנתח קוד ומייצר שאלות הגנה מותאמות אישית...</p>
+                <p className="text-teal-800 font-bold text-sm">מנתח את המטלה והפתרון ומייצר שאלות הגנה מותאמות אישית לרמת {difficultyLevel === "easy" ? "קל" : difficultyLevel === "medium" ? "בינוני" : "קשה"}...</p>
               </div>
             ) : (
               <button
                 onClick={handleStartDefense}
                 className="w-full py-4 bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-bold rounded-2xl shadow-lg shadow-teal-100 hover:shadow-xl hover:translate-y-[-1px] transition-all cursor-pointer text-center text-lg active:scale-98"
               >
-                התחילו בהגנה על הפרויקט
+                התחילו בהגנה על המטלה
               </button>
             )}
           </div>
@@ -297,9 +439,16 @@ export default function InterviewSimulatorPage() {
         {/* STEP 2: Defense Simulator (Questions) */}
         {step === 2 && (
           <div className="bg-white border border-slate-200/80 rounded-3xl p-8 shadow-xl shadow-slate-100/55 max-w-4xl mx-auto w-full space-y-8">
-            <div className="border-b border-slate-100 pb-4">
-              <h3 className="text-xl font-bold text-slate-800">סימולציית ההגנה התחילה</h3>
-              <p className="text-slate-400 text-xs mt-1">ענה על השאלות בצורה טכנית וממוקדת. ה-AI יעריך את רמת הבגרות והפתרונות שלך.</p>
+            <div className="border-b border-slate-100 pb-4 flex justify-between items-center">
+              <div>
+                <h3 className="text-xl font-bold text-slate-800">סימולציית ההגנה התחילה</h3>
+                <p className="text-slate-400 text-xs mt-1">ענו על שאלות ההגנה בצורה ממוקדת. הציפיות מותאמות לרמת קושי: {difficultyLevel === "easy" ? "קל" : difficultyLevel === "medium" ? "בינוני" : "קשה"}.</p>
+              </div>
+              <span className={`text-xs font-black px-3 py-1.5 rounded-lg text-white ${
+                difficultyLevel === "easy" ? "bg-emerald-600" : difficultyLevel === "medium" ? "bg-amber-500" : "bg-red-650"
+              }`}>
+                רמת {difficultyLevel === "easy" ? "קל" : difficultyLevel === "medium" ? "בינוני" : "קשה"}
+              </span>
             </div>
 
             <div className="space-y-6">
@@ -315,7 +464,7 @@ export default function InterviewSimulatorPage() {
                     {q.question_text}
                   </h4>
                   <textarea
-                    value={answers[q.question_id]}
+                    value={answers[q.question_id] || ""}
                     onChange={(e) => handleAnswerChange(q.question_id, e.target.value)}
                     disabled={isEvaluating}
                     placeholder="הקלד כאן את ההתגוננות הטכנית וההסבר שלך לקוד באנגלית..."
@@ -338,7 +487,7 @@ export default function InterviewSimulatorPage() {
             {isEvaluating ? (
               <div className="bg-teal-50/50 border border-teal-100 rounded-2xl p-6 flex flex-col items-center justify-center gap-3">
                 <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-teal-600"></div>
-                <p className="text-teal-800 font-bold text-sm">מעריך ומנתח את התשובות הטכניות מול מודלים אידיאליים...</p>
+                <p className="text-teal-800 font-bold text-sm">מעריך ומנתח את התשובות הטכניות מול מודלים אידיאליים לרמת {difficultyLevel === "easy" ? "קל" : difficultyLevel === "medium" ? "בינוני" : "קשה"}...</p>
               </div>
             ) : (
               <div className="flex gap-4">
@@ -397,7 +546,14 @@ export default function InterviewSimulatorPage() {
                   <span className="absolute text-2xl font-black text-slate-900">{evaluation.overall_score}</span>
                 </div>
                 <div className="space-y-1 text-center sm:text-right">
-                  <h3 className="font-bold text-slate-800 text-lg">ציון הגנה כללי</h3>
+                  <div className="flex items-center gap-2 justify-center sm:justify-start">
+                    <h3 className="font-bold text-slate-800 text-lg">ציון הגנה כללי</h3>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded text-white ${
+                      difficultyLevel === "easy" ? "bg-emerald-600" : difficultyLevel === "medium" ? "bg-amber-500" : "bg-red-655"
+                    }`}>
+                      רמת {difficultyLevel === "easy" ? "קל" : difficultyLevel === "medium" ? "בינוני" : "קשה"}
+                    </span>
+                  </div>
                   <p className="text-slate-500 text-sm leading-relaxed max-w-xl">
                     {evaluation.general_feedback}
                   </p>

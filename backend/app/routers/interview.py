@@ -1,8 +1,9 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import chromadb
+import fitz # PyMuPDF
 
 # LangChain imports
 from langchain_core.prompts import ChatPromptTemplate
@@ -182,7 +183,7 @@ async def generate_defense_questions(
         db.commit()
         db.refresh(user)
 
-    # Perform vector similarity search
+    # Perform vector similarity search on assignment description
     retrieved_questions = []
     try:
         collection = get_chroma_collection()
@@ -196,14 +197,14 @@ async def generate_defense_questions(
                 model="models/text-embedding-004",
                 google_api_key=settings.GOOGLE_API_KEY
             )
-            query_vector = embeddings.embed_query(payload.assignment_text[:2000])
+            query_vector = embeddings.embed_query(payload.assignment_description[:2000])
             results = collection.query(
                 query_embeddings=[query_vector],
                 n_results=5
             )
         else:
             results = collection.query(
-                query_texts=[payload.assignment_text[:1000]],
+                query_texts=[payload.assignment_description[:1000]],
                 n_results=5
             )
 
@@ -240,16 +241,30 @@ async def generate_defense_questions(
         if not has_key:
             # Mock questions fallback
             synthesized = [
-                {"question_text": f"Evaluate scaling for: {retrieved_questions[0]['question_text']}", "category": retrieved_questions[0]["category"]},
-                {"question_text": f"Evaluate architecture for: {retrieved_questions[1]['question_text']}", "category": retrieved_questions[1]["category"]},
-                {"question_text": f"Evaluate fallbacks for: {retrieved_questions[2]['question_text']}", "category": retrieved_questions[2]["category"]}
-            ]
+                {"question_text": f"[{payload.difficulty_level.upper()}] Evaluate scaling for: {retrieved_questions[0]['question_text']}", "category": retrieved_questions[0]["category"]},
+                {"question_text": f"[{payload.difficulty_level.upper()}] Evaluate architecture for: {retrieved_questions[1]['question_text']}", "category": retrieved_questions[1]["category"]},
+                {"question_text": f"[{payload.difficulty_level.upper()}] Evaluate fallbacks for: {retrieved_questions[2]['question_text']}", "category": retrieved_questions[2]["category"]},
+                {"question_text": f"[{payload.difficulty_level.upper()}] Evaluate security for: {retrieved_questions[3]['question_text']}", "category": retrieved_questions[3]["category"]},
+                {"question_text": f"[{payload.difficulty_level.upper()}] Evaluate performance for: {retrieved_questions[4]['question_text']}", "category": retrieved_questions[4]["category"]}
+            ][:payload.num_questions]
         else:
             llm = get_llm(temperature=0.4)
             
-            system_prompt = f"You are a senior tech lead reviewing a candidate's technical home assignment.\nYou are given the candidate's code submission and a list of structural/conceptual design questions.\nSynthesize exactly {payload.num_questions} customized project defense questions.\nFor each question:\n- Blend the retrieved conceptual query with the candidate's actual submitted code/documentation.\n- Focus on practical trade-offs, scalability bottlenecks, database transactions, concurrency, or security flaws apparent in their code.\n- Write the questions clearly in English."
+            system_prompt = f"You are a senior tech lead reviewing a candidate's technical home assignment.\n" \
+                            f"You are given the home assignment instructions/guidelines, the candidate's solution, and a list of structural/conceptual design questions.\n" \
+                            f"Synthesize exactly {payload.num_questions} customized project defense questions.\n" \
+                            f"Focus the difficulty of the questions on a level appropriate for: {payload.difficulty_level.upper()}.\n" \
+                            f"- EASY: Focus on basic code clarity, syntax, simple logic, and basic local error handling.\n" \
+                            f"- MEDIUM: Focus on standard design patterns, API separation, database usage, clean code, and standard testability.\n" \
+                            f"- HARD: Focus on deep architectural patterns, high concurrency, security under pressure, scaling bottlenecks, memory leakage, and complex performance trade-offs.\n" \
+                            f"For each question:\n" \
+                            f"- Blend the retrieved conceptual query with the candidate's actual submitted solution/instructions.\n" \
+                            f"- Write the questions clearly in English."
             
-            user_prompt = f"Candidate's Code/Project Submission:\n---\n{payload.assignment_text}\n---\n\nRetrieved Base System Questions:\n{str(retrieved_questions)}\n\nSynthesize exactly {payload.num_questions} questions."
+            user_prompt = f"Assignment Instructions/Guidelines:\n---\n{payload.assignment_description}\n---\n\n" \
+                          f"Candidate's Solution:\n---\n{payload.solution_text}\n---\n\n" \
+                          f"Retrieved Base System Questions:\n{str(retrieved_questions)}\n\n" \
+                          f"Synthesize exactly {payload.num_questions} questions."
             
             prompt = ChatPromptTemplate.from_messages([
                 ("system", "{system_text}"),
@@ -263,7 +278,7 @@ async def generate_defense_questions(
             synthesized = [
                 {"question_text": q.question_text, "category": q.category}
                 for q in llm_result.questions
-            ]
+            ][:payload.num_questions]
 
         # Map to Response Question Item
         questions_list = []
@@ -277,7 +292,10 @@ async def generate_defense_questions(
         # Save Interview row to database
         db_interview = Interview(
             user_id=user.user_id,
-            assignment_text=payload.assignment_text,
+            assignment_description=payload.assignment_description,
+            solution_text=payload.solution_text,
+            difficulty_level=payload.difficulty_level,
+            num_questions=payload.num_questions,
             questions_json=[q.model_dump() for q in questions_list]
         )
         db.add(db_interview)
@@ -339,9 +357,23 @@ async def evaluate_defense_answers(
         else:
             llm = get_llm(temperature=0.3)
             
-            system_prompt = "You are a senior tech lead evaluating a candidate's technical defense of their home assignment.\nCompare the candidate's answers against the context of their submitted code.\nFor each answer:\n- Score it between 0 and 100.\n- Provide a detailed rationale/feedback strictly in Hebrew.\n- Provide an ideal model answer in English.\n- Provide an improved, highly technical phrasing in English that the candidate could use to sound more senior.\n\nAlso provide an overall score (1-100) and general high-level feedback strictly in Hebrew."
+            system_prompt = f"You are a senior tech lead evaluating a candidate's technical defense of their home assignment.\n" \
+                            f"Compare the candidate's answers against the context of the assignment instructions and their submitted solution.\n" \
+                            f"The chosen difficulty is: {getattr(interview, 'difficulty_level', 'medium').upper()}.\n" \
+                            f"Evaluate the answers with strictness matching this difficulty level:\n" \
+                            f"- EASY: Evaluate if the answers explain basic programming concepts, syntax, and simple logic correctness.\n" \
+                            f"- MEDIUM: Evaluate if the answers demonstrate standard design principles, appropriate API splits, and clean code.\n" \
+                            f"- HARD: Expect senior-level reasoning showing deep architectural patterns, concurrency knowledge, performance benchmarking, and complex trade-off analysis.\n" \
+                            f"For each answer:\n" \
+                            f"- Score it between 0 and 100.\n" \
+                            f"- Provide a detailed rationale/feedback strictly in Hebrew.\n" \
+                            f"- Provide an ideal model answer in English.\n" \
+                            f"- Provide an improved, highly technical phrasing in English that the candidate could use to sound more senior.\n\n" \
+                            f"Also provide an overall score (1-100) and general high-level feedback strictly in Hebrew."
             
-            user_prompt = f"Candidate's Original Assignment Submission:\n---\n{payload.assignment_text}\n---\n\nCandidate's Answers:\n{conversation_str}"
+            user_prompt = f"Assignment Instructions/Guidelines:\n---\n{getattr(interview, 'assignment_description', '')}\n---\n\n" \
+                          f"Candidate's Solution:\n---\n{getattr(interview, 'solution_text', '')}\n---\n\n" \
+                          f"Candidate's Answers:\n{conversation_str}"
             
             prompt = ChatPromptTemplate.from_messages([
                 ("system", "{system_text}"),
@@ -383,3 +415,27 @@ async def evaluate_defense_answers(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to evaluate defense answers: {str(e)}")
+
+
+@router.post("/parse-file")
+async def parse_uploaded_file(file: UploadFile = File(...)):
+    filename = file.filename.lower()
+    if not (filename.endswith(".pdf") or filename.endswith(".txt")):
+        raise HTTPException(status_code=400, detail="Only PDF and TXT files are supported")
+        
+    try:
+        file_bytes = await file.read()
+        if filename.endswith(".pdf"):
+            doc = fitz.open(stream=file_bytes, filetype="pdf")
+            extracted_text = ""
+            for page in doc:
+                extracted_text += page.get_text()
+            if not extracted_text.strip():
+                raise HTTPException(status_code=400, detail="Uploaded PDF is empty or could not be parsed")
+            return {"text": extracted_text.strip()}
+        else:
+            # TXT file
+            text = file_bytes.decode("utf-8", errors="ignore")
+            return {"text": text.strip()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse file: {str(e)}")
