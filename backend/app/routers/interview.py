@@ -1,22 +1,25 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File
+import io
+import os
+import shutil
+import tempfile
+from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import chromadb
-import fitz # PyMuPDF
-import io
+import fitz  # PyMuPDF
 import docx
 import pptx
+import zipfile
 
-# LangChain imports
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+# Google GenAI SDK imports
+from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
 
 from app.database import get_db
 from app.models import Interview, InterviewEvaluation, User
 from app.schemas import (
-    GenerateQuestionsRequest,
     GenerateQuestionsResponse,
     QuestionItem,
     EvaluateInterviewRequest,
@@ -24,28 +27,27 @@ from app.schemas import (
     QuestionEvaluationItem
 )
 from app.config import settings
-from app.services.llm_factory import get_llm
 
 router = APIRouter(prefix="/api/interview", tags=["Interview Simulator"])
 
 # --- Pydantic Schemas for LLM Structured Output ---
 class LLMQuestionItem(BaseModel):
-    question_text: str = Field(description="The tailored technical project defense question")
-    category: str = Field(description="Category of the question (e.g., Architecture, Security, Scaling)")
+    question_text: str = Field(description="The tailored technical project defense question in the requested language")
+    category: str = Field(description="Category of the question (e.g., Architecture, Security, Scaling) in the requested language")
 
 class LLMQuestionsList(BaseModel):
-    questions: List[LLMQuestionItem] = Field(description="List of 3 to 5 synthesized questions")
+    questions: List[LLMQuestionItem] = Field(description="List of 5 to 10 synthesized questions")
 
 class LLMAnswerEvaluation(BaseModel):
     question_id: str = Field(description="ID of the question")
     score: int = Field(description="Score for this specific answer (0-100)", ge=0, le=100)
-    rationale: str = Field(description="Constructive critique in Hebrew detailing what was good and what was missing")
-    model_answer: str = Field(description="An exemplar response in English representing a perfect answer for this question")
-    improved_phrasing: str = Field(description="The candidate's answer re-phrased in English to sound highly professional and technical")
+    rationale: str = Field(description="Constructive critique detailing what was good and what was missing in the requested language")
+    model_answer: str = Field(description="An exemplar response representing a perfect answer for this question in the requested language")
+    improved_phrasing: str = Field(description="The candidate's answer re-phrased to sound highly professional and technical in the requested language")
 
 class LLMEvaluationResult(BaseModel):
     overall_score: int = Field(description="Average score across all questions (1-100)")
-    general_feedback: str = Field(description="High-level feedback of candidate's strength and overall performance in Hebrew")
+    general_feedback: str = Field(description="High-level feedback of candidate's strength and overall performance in the requested language")
     evaluations: List[LLMAnswerEvaluation] = Field(description="Detailed grading matrix for each answer")
 
 
@@ -58,7 +60,6 @@ def get_chroma_collection():
         )
         return collection
     except Exception as e:
-        # Fallback to in-memory/dummy client if persistent client fails
         client = chromadb.EphemeralClient()
         collection = client.get_or_create_collection(
             name="system_evaluation_questions"
@@ -136,23 +137,18 @@ DEFAULT_QUESTION_BANK = [
 # Helper to populate Chroma DB
 def seed_questions_into_chroma():
     collection = get_chroma_collection()
-    # Check if empty
     if collection.count() == 0:
-        # Use embeddings model to vectorize
         try:
+            # We can use LangChain Embeddings or native GenAI for seeding
+            from langchain_google_genai import GoogleGenerativeAIEmbeddings
             embeddings = GoogleGenerativeAIEmbeddings(
                 model="models/text-embedding-004",
                 google_api_key=settings.GOOGLE_API_KEY
             )
-            
             ids = [f"bank-{i}" for i in range(len(DEFAULT_QUESTION_BANK))]
             documents = [q["text"] for q in DEFAULT_QUESTION_BANK]
             metadatas = [{"category": q["category"]} for q in DEFAULT_QUESTION_BANK]
-            
-            # Embed documents
             embedded_docs = embeddings.embed_documents(documents)
-            
-            # Add to Chroma collection
             collection.add(
                 ids=ids,
                 embeddings=embedded_docs,
@@ -160,7 +156,7 @@ def seed_questions_into_chroma():
                 metadatas=metadatas
             )
         except Exception as e:
-            # Fallback mock setup if Embeddings fail (API key issues)
+            # Fallback mock setup
             ids = [f"bank-{i}" for i in range(len(DEFAULT_QUESTION_BANK))]
             documents = [q["text"] for q in DEFAULT_QUESTION_BANK]
             metadatas = [{"category": q["category"]} for q in DEFAULT_QUESTION_BANK]
@@ -171,9 +167,129 @@ def seed_questions_into_chroma():
             )
 
 
+# Local file parser helper for Chroma DB querying
+async def extract_text_from_upload_file(upload_file: UploadFile) -> str:
+    filename = upload_file.filename.lower()
+    file_bytes = await upload_file.read()
+    # Seek back to 0 so other streams can read it
+    await upload_file.seek(0)
+    
+    try:
+        if filename.endswith(".pdf"):
+            doc = fitz.open(stream=file_bytes, filetype="pdf")
+            return "".join([page.get_text() for page in doc])
+        elif filename.endswith((".docx", ".doc")):
+            doc_file = docx.Document(io.BytesIO(file_bytes))
+            paragraphs = [p.text for p in doc_file.paragraphs]
+            for table in doc_file.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        paragraphs.append(cell.text)
+            return "\n".join(paragraphs)
+        elif filename.endswith((".pptx", ".ppt")):
+            prs = pptx.Presentation(io.BytesIO(file_bytes))
+            text_runs = []
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text:
+                        text_runs.append(shape.text)
+            return "\n".join(text_runs)
+        else:
+            return file_bytes.decode("utf-8", errors="ignore")
+    except Exception as e:
+        return ""
+
+
+# Helper to stream a file to Google GenAI File API
+async def upload_to_google_ai(client: genai.Client, upload_file: UploadFile) -> any:
+    # Write to a temporary file locally so google-genai SDK can stream it
+    suffix = os.path.splitext(upload_file.filename)[1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+        content = await upload_file.read()
+        await upload_file.seek(0)
+        temp_file.write(content)
+        temp_file_path = temp_file.name
+
+    try:
+        # Upload
+        uploaded_file = client.files.upload(file=temp_file_path)
+        return uploaded_file
+    finally:
+        # Clean up local temp file
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+
+async def process_and_upload_file(client: genai.Client, upload_file: UploadFile) -> List[str]:
+    filename = upload_file.filename.lower()
+    
+    # 1. If it's a PDF, TXT, or direct image, we can upload it directly.
+    supported_direct_extensions = (".pdf", ".txt", ".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".gif")
+    if filename.endswith(supported_direct_extensions):
+        uploaded = await upload_to_google_ai(client, upload_file)
+        return [uploaded.name]
+        
+    # 2. For unsupported document types (Word/PowerPoint), extract text locally, upload as a .txt file,
+    # and extract embedded media files to upload them individually.
+    resource_names = []
+    
+    # Extract text content
+    extracted_text = await extract_text_from_upload_file(upload_file)
+    if not extracted_text.strip():
+        extracted_text = f"Empty text or unparseable document: {upload_file.filename}"
+        
+    # Write the extracted text into a temporary TXT file and upload it
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8") as temp_txt:
+        temp_txt.write(extracted_text)
+        temp_txt_path = temp_txt.name
+        
+    try:
+        uploaded_txt = client.files.upload(file=temp_txt_path)
+        resource_names.append(uploaded_txt.name)
+    finally:
+        if os.path.exists(temp_txt_path):
+            os.remove(temp_txt_path)
+            
+    # Now try to open the file as a zip and extract media files
+    try:
+        file_bytes = await upload_file.read()
+        await upload_file.seek(0)
+        
+        # Open bytes as a zip archive
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+            for zip_info in z.infolist():
+                name = zip_info.filename.lower()
+                is_image = any(name.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp"))
+                is_media_path = "media/" in name or "word/media/" in name or "ppt/media/" in name
+                
+                if is_image and (is_media_path or zip_info.file_size > 0):
+                    img_data = z.read(zip_info.filename)
+                    suffix = os.path.splitext(name)[1]
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_img:
+                        temp_img.write(img_data)
+                        temp_img_path = temp_img.name
+                        
+                    try:
+                        uploaded_img = client.files.upload(file=temp_img_path)
+                        resource_names.append(uploaded_img.name)
+                    except Exception as e:
+                        print(f"Skipping image {name} upload failure: {e}")
+                    finally:
+                        if os.path.exists(temp_img_path):
+                            os.remove(temp_img_path)
+    except Exception as e:
+        print(f"File {upload_file.filename} is not a valid zip archive or zip extraction failed: {e}")
+        
+    return resource_names
+
+
 @router.post("/generate-questions", response_model=GenerateQuestionsResponse)
 async def generate_defense_questions(
-    payload: GenerateQuestionsRequest,
+    assignment_file: UploadFile = File(...),
+    solution_file: UploadFile = File(...),
+    difficulty_level: str = Form("medium"),
+    num_questions: int = Form(5),
+    language: str = Form("hebrew"),
     x_user_id: Optional[str] = Header(None, alias="X-User-ID"),
     db: Session = Depends(get_db)
 ):
@@ -186,28 +302,28 @@ async def generate_defense_questions(
         db.commit()
         db.refresh(user)
 
-    # Perform vector similarity search on assignment description
+    # 1. Parse a small snippet locally to run Chroma DB vector similarity search
     retrieved_questions = []
     try:
-        collection = get_chroma_collection()
+        assignment_text_snippet = await extract_text_from_upload_file(assignment_file)
         
-        # If API key is available, use Google Embeddings to search
-        has_key = (settings.MODEL_PROVIDER == "google" and settings.GOOGLE_API_KEY) or \
-                  (settings.MODEL_PROVIDER == "openai" and settings.OPENAI_API_KEY)
-                  
-        if has_key:
+        collection = get_chroma_collection()
+        has_key = settings.GOOGLE_API_KEY is not None
+        
+        if has_key and assignment_text_snippet.strip():
+            from langchain_google_genai import GoogleGenerativeAIEmbeddings
             embeddings = GoogleGenerativeAIEmbeddings(
                 model="models/text-embedding-004",
                 google_api_key=settings.GOOGLE_API_KEY
             )
-            query_vector = embeddings.embed_query(payload.assignment_description[:2000])
+            query_vector = embeddings.embed_query(assignment_text_snippet[:2000])
             results = collection.query(
                 query_embeddings=[query_vector],
                 n_results=5
             )
         else:
             results = collection.query(
-                query_texts=[payload.assignment_description[:1000]],
+                query_texts=[assignment_text_snippet[:1000]] if assignment_text_snippet else ["General architecture"],
                 n_results=5
             )
 
@@ -221,84 +337,87 @@ async def generate_defense_questions(
                     "category": category
                 })
     except Exception as e:
-        # Fallback to random default questions if search fails
         for q in DEFAULT_QUESTION_BANK[:5]:
-            retrieved_questions.append({
-                "question_text": q["text"],
-                "category": q["category"]
-            })
+            retrieved_questions.append({"question_text": q["text"], "category": q["category"]})
 
-    # Fallback check
     if not retrieved_questions:
         for q in DEFAULT_QUESTION_BANK[:5]:
-            retrieved_questions.append({
-                "question_text": q["text"],
-                "category": q["category"]
-            })
+            retrieved_questions.append({"question_text": q["text"], "category": q["category"]})
 
-    # Call Gemini to synthesize questions specific to user's code
+    # 2. Upload files to Google AI platform and generate structured questions natively
     try:
-        has_key = (settings.MODEL_PROVIDER == "google" and settings.GOOGLE_API_KEY) or \
-                  (settings.MODEL_PROVIDER == "openai" and settings.OPENAI_API_KEY)
+        client = genai.Client(api_key=settings.GOOGLE_API_KEY)
         
-        if not has_key:
-            # Mock questions fallback
-            synthesized = [
-                {"question_text": f"[{payload.difficulty_level.upper()}] Evaluate scaling for: {retrieved_questions[0]['question_text']}", "category": retrieved_questions[0]["category"]},
-                {"question_text": f"[{payload.difficulty_level.upper()}] Evaluate architecture for: {retrieved_questions[1]['question_text']}", "category": retrieved_questions[1]["category"]},
-                {"question_text": f"[{payload.difficulty_level.upper()}] Evaluate fallbacks for: {retrieved_questions[2]['question_text']}", "category": retrieved_questions[2]["category"]},
-                {"question_text": f"[{payload.difficulty_level.upper()}] Evaluate security for: {retrieved_questions[3]['question_text']}", "category": retrieved_questions[3]["category"]},
-                {"question_text": f"[{payload.difficulty_level.upper()}] Evaluate performance for: {retrieved_questions[4]['question_text']}", "category": retrieved_questions[4]["category"]}
-            ][:payload.num_questions]
-        else:
-            llm = get_llm(temperature=0.4)
-            
-            system_prompt = f"You are a senior tech lead reviewing a candidate's technical home assignment.\n" \
-                            f"You are given the home assignment instructions/guidelines, the candidate's solution, and a list of structural/conceptual design questions.\n" \
-                            f"Synthesize exactly {payload.num_questions} customized project defense questions.\n" \
-                            f"Focus the difficulty of the questions on a level appropriate for: {payload.difficulty_level.upper()}.\n" \
-                            f"- EASY: Focus on basic code clarity, syntax, simple logic, and basic local error handling.\n" \
-                            f"- MEDIUM: Focus on standard design patterns, API separation, database usage, clean code, and standard testability.\n" \
-                            f"- HARD: Focus on deep architectural patterns, high concurrency, security under pressure, scaling bottlenecks, memory leakage, and complex performance trade-offs.\n" \
-                            f"For each question:\n" \
-                            f"- Blend the retrieved conceptual query with the candidate's actual submitted solution/instructions.\n" \
-                            f"- Write the questions clearly in English."
-            
-            user_prompt = f"Assignment Instructions/Guidelines:\n---\n{payload.assignment_description}\n---\n\n" \
-                          f"Candidate's Solution:\n---\n{payload.solution_text}\n---\n\n" \
-                          f"Retrieved Base System Questions:\n{str(retrieved_questions)}\n\n" \
-                          f"Synthesize exactly {payload.num_questions} questions."
-            
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", "{system_text}"),
-                ("user", "{user_text}")
-            ])
-            
-            structured_llm = llm.with_structured_output(LLMQuestionsList)
-            chain = prompt | structured_llm
-            llm_result = chain.invoke({"system_text": system_prompt, "user_text": user_prompt})
-            
-            synthesized = [
-                {"question_text": q.question_text, "category": q.category}
-                for q in llm_result.questions
-            ][:payload.num_questions]
+        # Upload dynamically
+        assignment_uris = await process_and_upload_file(client, assignment_file)
+        solution_uris = await process_and_upload_file(client, solution_file)
+        
+        assignment_files = []
+        for uri in assignment_uris:
+            try:
+                assignment_files.append(client.files.get(name=uri))
+            except Exception as e:
+                print(f"Error getting assignment file {uri}: {e}")
+                
+        solution_files = []
+        for uri in solution_uris:
+            try:
+                solution_files.append(client.files.get(name=uri))
+            except Exception as e:
+                print(f"Error getting solution file {uri}: {e}")
+        
+        # Call native Gemini model
+        lang_str = "Hebrew" if language.lower() == "hebrew" else "English"
+        system_prompt = f"You are a senior tech lead reviewing a candidate's technical home assignment.\n" \
+                        f"You are given the uploaded assignment guidelines file(s) and the candidate's solution file(s).\n" \
+                        f"Synthesize exactly {num_questions} customized project defense questions.\n" \
+                        f"Focus the difficulty of the questions on a level appropriate for: {difficulty_level.upper()}.\n" \
+                        f"- EASY: Focus on basic code clarity, syntax, simple logic, and basic local error handling.\n" \
+                        f"- MEDIUM: Focus on standard design patterns, API separation, database usage, clean code, and standard testability.\n" \
+                        f"- HARD: Focus on deep architectural patterns, high concurrency, security under pressure, scaling bottlenecks, memory leakage, and complex performance trade-offs.\n" \
+                        f"For each question:\n" \
+                        f"- Blend the retrieved conceptual query with the candidate's actual submitted solution/instructions.\n" \
+                        f"- Write the questions clearly in {lang_str}."
 
-        # Map to Response Question Item
+        user_prompt = f"Retrieved Base System Questions to integrate or draw themes from:\n{str(retrieved_questions)}\n\n" \
+                      f"Synthesize exactly {num_questions} questions in {lang_str}."
+
+        # Model call
+        contents_payload = []
+        contents_payload.extend(assignment_files)
+        contents_payload.extend(solution_files)
+        contents_payload.append(system_prompt)
+        contents_payload.append(user_prompt)
+
+        response = client.models.generate_content(
+            model=settings.LLM_MODEL or "gemini-2.0-flash",
+            contents=contents_payload,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=LLMQuestionsList,
+                temperature=0.4
+            )
+        )
+
+        import json
+        llm_result = LLMQuestionsList.model_validate_json(response.text)
+        
         questions_list = []
-        for idx, q in enumerate(synthesized):
+        for idx, q in enumerate(llm_result.questions[:num_questions]):
             questions_list.append(QuestionItem(
                 question_id=f"q-{idx + 1}",
-                question_text=q["question_text"],
-                category=q["category"]
+                question_text=q.question_text,
+                category=q.category
             ))
 
-        # Save Interview row to database
+        # Save Interview session to database (comma-separated URIs)
         db_interview = Interview(
             user_id=user.user_id,
-            assignment_description=payload.assignment_description,
-            solution_text=payload.solution_text,
-            difficulty_level=payload.difficulty_level,
-            num_questions=payload.num_questions,
+            assignment_file_uri=",".join(assignment_uris),
+            solution_file_uri=",".join(solution_uris),
+            difficulty_level=difficulty_level,
+            num_questions=num_questions,
+            language=language,
             questions_json=[q.model_dump() for q in questions_list]
         )
         db.add(db_interview)
@@ -325,11 +444,9 @@ async def evaluate_defense_answers(
     if not interview:
         raise HTTPException(status_code=404, detail="Interview session not found")
 
-    # Map question answers to context
     answers_mapping = {ans.question_id: ans.answer_text for ans in payload.answers}
     questions_list = interview.questions_json or []
 
-    # Format questions and answers for prompt
     conversation_str = ""
     for q in questions_list:
         q_id = q.get("question_id")
@@ -338,56 +455,69 @@ async def evaluate_defense_answers(
         conversation_str += f"Question ID: {q_id}\nQuestion: {q_text}\nCandidate's Answer: {ans_text}\n\n"
 
     try:
-        has_key = (settings.MODEL_PROVIDER == "google" and settings.GOOGLE_API_KEY) or \
-                  (settings.MODEL_PROVIDER == "openai" and settings.OPENAI_API_KEY)
+        client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        
+        # Retrieve original file references from Google AI Files API dynamically
+        lang = getattr(interview, 'language', 'hebrew') or 'hebrew'
+        lang_str = "Hebrew" if lang.lower() == "hebrew" else "English"
+        
+        assignment_uris = (interview.assignment_file_uri or "").split(",")
+        solution_uris = (interview.solution_file_uri or "").split(",")
+        
+        assignment_files = []
+        for uri in assignment_uris:
+            uri = uri.strip()
+            if uri:
+                try:
+                    assignment_files.append(client.files.get(name=uri))
+                except Exception as e:
+                    print(f"Error getting assignment file {uri}: {e}")
+                    
+        solution_files = []
+        for uri in solution_uris:
+            uri = uri.strip()
+            if uri:
+                try:
+                    solution_files.append(client.files.get(name=uri))
+                except Exception as e:
+                    print(f"Error getting solution file {uri}: {e}")
 
-        if not has_key:
-            # Fallback mock evaluation
-            evals = []
-            for q in questions_list:
-                evals.append(LLMAnswerEvaluation(
-                    question_id=q.get("question_id"),
-                    score=85,
-                    rationale="תשובה טובה המציגה הבנה בסיסית של הנושא.",
-                    model_answer="Implement a pooling utility...",
-                    improved_phrasing="To handle loads, I implement connection pooling."
-                ))
-            llm_result = LLMEvaluationResult(
-                overall_score=85,
-                general_feedback="הפגנת הבנה טובה של עקרונות המערכת. מומלץ להעמיק בניהול זיכרון וביצועים.",
-                evaluations=evals
+        system_prompt = f"You are a senior tech lead evaluating a candidate's technical defense of their home assignment.\n" \
+                        f"Compare the candidate's answers against the context of the attached assignment instructions file and solution file.\n" \
+                        f"The chosen difficulty is: {getattr(interview, 'difficulty_level', 'medium').upper()}.\n" \
+                        f"Evaluate the answers with strictness matching this difficulty level:\n" \
+                        f"- EASY: Evaluate if the answers explain basic programming concepts, syntax, and simple logic correctness.\n" \
+                        f"- MEDIUM: Evaluate if the answers demonstrate standard design principles, appropriate API splits, and clean code.\n" \
+                        f"- HARD: Expect senior-level reasoning showing deep architectural patterns, concurrency knowledge, performance benchmarking, and complex trade-off analysis.\n" \
+                        f"For each answer:\n" \
+                        f"- Score it between 0 and 100.\n" \
+                        f"- Provide a detailed rationale/feedback strictly in {lang_str}.\n" \
+                        f"- Provide an ideal model answer in {lang_str}.\n" \
+                        f"- Provide an improved, highly technical phrasing in {lang_str} that the candidate could use to sound more senior.\n\n" \
+                        f"Also provide an overall score (1-100) and general high-level feedback strictly in {lang_str}."
+
+        user_prompt = f"Candidate's Answers:\n{conversation_str}"
+
+        # Generate evaluation
+        contents_payload = []
+        contents_payload.extend(assignment_files)
+        contents_payload.extend(solution_files)
+        contents_payload.append(system_prompt)
+        contents_payload.append(user_prompt)
+
+        response = client.models.generate_content(
+            model=settings.LLM_MODEL or "gemini-2.0-flash",
+            contents=contents_payload,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=LLMEvaluationResult,
+                temperature=0.3
             )
-        else:
-            llm = get_llm(temperature=0.3)
-            
-            system_prompt = f"You are a senior tech lead evaluating a candidate's technical defense of their home assignment.\n" \
-                            f"Compare the candidate's answers against the context of the assignment instructions and their submitted solution.\n" \
-                            f"The chosen difficulty is: {getattr(interview, 'difficulty_level', 'medium').upper()}.\n" \
-                            f"Evaluate the answers with strictness matching this difficulty level:\n" \
-                            f"- EASY: Evaluate if the answers explain basic programming concepts, syntax, and simple logic correctness.\n" \
-                            f"- MEDIUM: Evaluate if the answers demonstrate standard design principles, appropriate API splits, and clean code.\n" \
-                            f"- HARD: Expect senior-level reasoning showing deep architectural patterns, concurrency knowledge, performance benchmarking, and complex trade-off analysis.\n" \
-                            f"For each answer:\n" \
-                            f"- Score it between 0 and 100.\n" \
-                            f"- Provide a detailed rationale/feedback strictly in Hebrew.\n" \
-                            f"- Provide an ideal model answer in English.\n" \
-                            f"- Provide an improved, highly technical phrasing in English that the candidate could use to sound more senior.\n\n" \
-                            f"Also provide an overall score (1-100) and general high-level feedback strictly in Hebrew."
-            
-            user_prompt = f"Assignment Instructions/Guidelines:\n---\n{getattr(interview, 'assignment_description', '')}\n---\n\n" \
-                          f"Candidate's Solution:\n---\n{getattr(interview, 'solution_text', '')}\n---\n\n" \
-                          f"Candidate's Answers:\n{conversation_str}"
-            
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", "{system_text}"),
-                ("user", "{user_text}")
-            ])
-            
-            structured_llm = llm.with_structured_output(LLMEvaluationResult)
-            chain = prompt | structured_llm
-            llm_result = chain.invoke({"system_text": system_prompt, "user_text": user_prompt})
+        )
 
-        # Save to database
+        llm_result = LLMEvaluationResult.model_validate_json(response.text)
+
+        # Save evaluation results to DB
         db_eval = InterviewEvaluation(
             interview_id=interview.interview_id,
             overall_score=llm_result.overall_score,
@@ -398,7 +528,7 @@ async def evaluate_defense_answers(
         db.commit()
         db.refresh(db_eval)
 
-        # Map to response schema
+        # Map response
         response_evals = []
         for e in llm_result.evaluations:
             response_evals.append(QuestionEvaluationItem(
@@ -422,50 +552,14 @@ async def evaluate_defense_answers(
 
 @router.post("/parse-file")
 async def parse_uploaded_file(file: UploadFile = File(...)):
+    # Fallback endpoint if needed for UI details
     filename = file.filename.lower()
     valid_extensions = (".pdf", ".txt", ".docx", ".doc", ".pptx", ".ppt")
     if not filename.endswith(valid_extensions):
         raise HTTPException(status_code=400, detail="Only PDF, TXT, Word (.docx) and PowerPoint (.pptx) files are supported")
         
     try:
-        file_bytes = await file.read()
-        if filename.endswith(".pdf"):
-            doc = fitz.open(stream=file_bytes, filetype="pdf")
-            extracted_text = ""
-            for page in doc:
-                extracted_text += page.get_text()
-            if not extracted_text.strip():
-                raise HTTPException(status_code=400, detail="Uploaded PDF is empty or could not be parsed")
-            return {"text": extracted_text.strip()}
-            
-        elif filename.endswith((".docx", ".doc")):
-            doc_file = docx.Document(io.BytesIO(file_bytes))
-            paragraphs_text = [p.text for p in doc_file.paragraphs]
-            # Also extract text from tables
-            for table in doc_file.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        paragraphs_text.append(cell.text)
-            extracted_text = "\n".join(paragraphs_text)
-            if not extracted_text.strip():
-                raise HTTPException(status_code=400, detail="Uploaded Word file is empty or could not be parsed")
-            return {"text": extracted_text.strip()}
-            
-        elif filename.endswith((".pptx", ".ppt")):
-            prs = pptx.Presentation(io.BytesIO(file_bytes))
-            text_runs = []
-            for slide in prs.slides:
-                for shape in slide.shapes:
-                    if hasattr(shape, "text") and shape.text:
-                        text_runs.append(shape.text)
-            extracted_text = "\n".join(text_runs)
-            if not extracted_text.strip():
-                raise HTTPException(status_code=400, detail="Uploaded PowerPoint file is empty or could not be parsed")
-            return {"text": extracted_text.strip()}
-            
-        else:
-            # TXT file
-            text = file_bytes.decode("utf-8", errors="ignore")
-            return {"text": text.strip()}
+        text = await extract_text_from_upload_file(file)
+        return {"text": text.strip()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse file: {str(e)}")

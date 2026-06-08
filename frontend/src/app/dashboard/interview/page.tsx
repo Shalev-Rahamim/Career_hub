@@ -25,18 +25,16 @@ interface EvaluationResult {
 
 export default function InterviewSimulatorPage() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [assignmentDescription, setAssignmentDescription] = useState("");
-  const [solutionText, setSolutionText] = useState("");
+  const [assignmentFile, setAssignmentFile] = useState<File | null>(null);
+  const [solutionFile, setSolutionFile] = useState<File | null>(null);
   const [difficultyLevel, setDifficultyLevel] = useState<"easy" | "medium" | "hard">("medium");
   const [numQuestions, setNumQuestions] = useState(5);
+  const [language, setLanguage] = useState<"hebrew" | "english">("hebrew");
   
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationStep, setGenerationStep] = useState<number>(1); // 1: upload, 2: search Chroma, 3: LLM synthesis
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Loading files indicators
-  const [isLoadingDescFile, setIsLoadingDescFile] = useState(false);
-  const [isLoadingSolFile, setIsLoadingSolFile] = useState(false);
 
   // Refs for file inputs
   const descFileRef = useRef<HTMLInputElement>(null);
@@ -50,74 +48,67 @@ export default function InterviewSimulatorPage() {
   // Grading states
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
 
-
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: "desc" | "sol") => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, target: "desc" | "sol") => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     const file = files[0];
+    
+    // Check extension
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    const valid = ["pdf", "docx", "doc", "pptx", "ppt", "txt"];
+    if (!ext || !valid.includes(ext)) {
+      setError("פורמט קובץ לא נתמך. אנא העלה PDF, Word, PowerPoint או TXT בלבד.");
+      return;
+    }
 
-    // Show loading
-    if (target === "desc") setIsLoadingDescFile(true);
-    else setIsLoadingSolFile(true);
     setError(null);
+    if (target === "desc") {
+      setAssignmentFile(file);
+    } else {
+      setSolutionFile(file);
+    }
+  };
 
-    const formData = new FormData();
-    formData.append("file", file);
-
-    try {
-      const response = await fetch("http://localhost:8000/api/interview/parse-file", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "קריאת הקובץ נכשלה");
-      }
-
-      const data = await response.json();
-      if (target === "desc") {
-        setAssignmentDescription(data.text);
-      } else {
-        setSolutionText(data.text);
-      }
-    } catch (err: any) {
-      setError(err.message || "שגיאה בפיענוח הקובץ. אנא העלה קובץ PDF, TXT, Word (.docx) או PowerPoint (.pptx) תקין.");
-    } finally {
-      if (target === "desc") setIsLoadingDescFile(false);
-      else setIsLoadingSolFile(false);
-      // Reset input value
-      e.target.value = "";
+  const removeFile = (target: "desc" | "sol") => {
+    if (target === "desc") {
+      setAssignmentFile(null);
+    } else {
+      setSolutionFile(null);
     }
   };
 
   const handleStartDefense = async () => {
-    if (!assignmentDescription.trim()) {
-      setError("אנא הזן או העלה את הנחיות המטלה");
+    if (!assignmentFile) {
+      setError("אנא העלה את קובץ הנחיות המטלה");
       return;
     }
-    if (!solutionText.trim()) {
-      setError("אנא הזן או העלה את פתרון המטלה");
+    if (!solutionFile) {
+      setError("אנא העלה את קובץ הפתרון שלך");
       return;
     }
 
     setIsGenerating(true);
+    setGenerationStep(1); // Uploading files
     setError(null);
 
+    const formData = new FormData();
+    formData.append("assignment_file", assignmentFile);
+    formData.append("solution_file", solutionFile);
+    formData.append("difficulty_level", difficultyLevel);
+    formData.append("num_questions", numQuestions.toString());
+    formData.append("language", language);
+
     try {
+      // Simulate stepped loaders for a premium visual feel
+      setTimeout(() => setGenerationStep(2), 2200); // Searching Chroma
+      setTimeout(() => setGenerationStep(3), 4500); // AI Synthesis
+
       const response = await fetch("http://localhost:8000/api/interview/generate-questions", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
           "X-User-ID": "test-user-uuid-12345",
         },
-        body: JSON.stringify({
-          assignment_description: assignmentDescription,
-          solution_text: solutionText,
-          difficulty_level: difficultyLevel,
-          num_questions: numQuestions,
-        }),
+        body: formData,
       });
 
       if (!response.ok) {
@@ -172,8 +163,6 @@ export default function InterviewSimulatorPage() {
         },
         body: JSON.stringify({
           interview_id: interviewId,
-          assignment_description: assignmentDescription,
-          solution_text: solutionText,
           answers: formattedAnswers,
         }),
       });
@@ -194,8 +183,8 @@ export default function InterviewSimulatorPage() {
 
   const handleRestart = () => {
     setStep(1);
-    setAssignmentDescription("");
-    setSolutionText("");
+    setAssignmentFile(null);
+    setSolutionFile(null);
     setQuestions([]);
     setAnswers({});
     setEvaluation(null);
@@ -238,14 +227,14 @@ export default function InterviewSimulatorPage() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-10 relative z-10 flex flex-col gap-8">
         <div>
           <h1 className="text-3xl font-black text-slate-900 mb-2">סימולטור הגנה על משימות בית</h1>
-          <p className="text-slate-500">העלו את הנחיות המטלה ואת הפתרון שלכם, ותרגלו התגוננות מפני שאלות קשות של רשי אצוות ומראיינים בדרגות קושי שונות.</p>
+          <p className="text-slate-500">העלו את קובץ הנחיות המטלה ואת קובץ הפתרון שלכם. המערכת תבצע ניתוח מולטי-מודאלי מלא של המדיה, הקוד והדיאגרמות שקיימים במסמכים.</p>
         </div>
 
         {/* Step Progression Bar */}
         <div className="max-w-xl w-full mx-auto bg-white border border-slate-200/80 rounded-2xl p-4 flex justify-between items-center shadow-sm text-xs font-bold text-slate-400">
           <div className={`flex items-center gap-2 ${step >= 1 ? "text-teal-600" : ""}`}>
             <span className={`w-6 h-6 rounded-full flex items-center justify-center border ${step >= 1 ? "border-teal-600 bg-teal-50" : "border-slate-200"}`}>1</span>
-            <span>העלאת פרויקט</span>
+            <span>העלאת קבצים</span>
           </div>
           <div className="w-12 border-t border-slate-200"></div>
           <div className={`flex items-center gap-2 ${step >= 2 ? "text-teal-600" : ""}`}>
@@ -259,125 +248,173 @@ export default function InterviewSimulatorPage() {
           </div>
         </div>
 
-        {/* STEP 1: Dual Input Ingestion Form */}
+        {/* STEP 1: Two File Upload Zones */}
         {step === 1 && (
-          <div className="bg-white border border-slate-200/80 rounded-3xl p-8 shadow-xl shadow-slate-100/55 max-w-5xl mx-auto w-full space-y-6">
+          <div className="bg-white border border-slate-200/80 rounded-3xl p-8 shadow-xl shadow-slate-100/55 max-w-4xl mx-auto w-full space-y-8">
             
-
-
-            {/* Two Column Layout for Description and Solution */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Upload zones grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               
-              {/* Column 1: Assignment guidelines */}
-              <div className="space-y-3 flex flex-col">
-                <div className="flex justify-between items-center">
-                  <label className="text-sm font-bold text-slate-800">1. הנחיות ודרישות המטלה (Assignment Instructions)</label>
-                  <button
-                    type="button"
+              {/* Dropzone 1: Assignment Guidelines */}
+              <div className="space-y-3">
+                <label className="text-sm font-bold text-slate-800 block">1. קובץ הנחיות/דרישות המטלה (Assignment Description)</label>
+                
+                {assignmentFile ? (
+                  <div className="border border-teal-200 bg-teal-50/20 rounded-2xl p-6 flex flex-col items-center justify-center relative min-h-[16rem]">
+                    <div className="w-12 h-12 rounded-xl bg-teal-500/10 flex items-center justify-center text-teal-600 mb-3 text-2xl">📄</div>
+                    <p className="font-bold text-slate-800 text-sm text-center truncate w-full max-w-[200px]">{assignmentFile.name}</p>
+                    <p className="text-slate-400 text-xs mt-1">{(assignmentFile.size / 1024).toFixed(1)} KB</p>
+                    <button
+                      onClick={() => removeFile("desc")}
+                      className="mt-4 px-3 py-1.5 bg-white border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-lg cursor-pointer transition-all"
+                    >
+                      🗑️ הסר קובץ
+                    </button>
+                  </div>
+                ) : (
+                  <div
                     onClick={() => descFileRef.current?.click()}
-                    disabled={isLoadingDescFile}
-                    className="text-xs font-bold text-teal-600 hover:text-teal-700 flex items-center gap-1 cursor-pointer bg-teal-50 px-2.5 py-1 rounded-lg"
+                    className="border-2 border-dashed border-slate-200 hover:border-teal-400 bg-slate-50/50 hover:bg-teal-50/5 rounded-2xl p-6 flex flex-col items-center justify-center cursor-pointer min-h-[16rem] transition-all group"
                   >
-                    {isLoadingDescFile ? "מפענח..." : "📤 העלה PDF / Word / PPTX"}
-                  </button>
-                  <input
-                    type="file"
-                    ref={descFileRef}
-                    onChange={(e) => handleFileUpload(e, "desc")}
-                    accept=".pdf,.txt,.docx,.doc,.pptx,.ppt"
-                    className="hidden"
-                  />
-                </div>
-                <textarea
-                  value={assignmentDescription}
-                  onChange={(e) => setAssignmentDescription(e.target.value)}
-                  placeholder="הדבק כאן את הוראות המטלה, דרישות המערכת או תיאור הפרויקט שקיבלת..."
-                  className="w-full h-80 px-4 py-3 border border-slate-200 rounded-2xl focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none transition-all text-right resize-none text-sm leading-relaxed"
+                    <div className="w-12 h-12 rounded-xl bg-slate-100 group-hover:bg-teal-100/50 flex items-center justify-center text-slate-500 group-hover:text-teal-600 mb-3 text-xl transition-all">📥</div>
+                    <p className="font-bold text-slate-700 text-sm">גרור והשלך קובץ לכאן</p>
+                    <p className="text-slate-400 text-xs mt-1">או לחץ לבחירת קובץ מהמחשב</p>
+                    <p className="text-slate-350 text-[10px] mt-4 font-semibold">פורמטים נתמכים: PDF, Docx, PPTX, TXT</p>
+                  </div>
+                )}
+                
+                <input
+                  type="file"
+                  ref={descFileRef}
+                  onChange={(e) => handleFileChange(e, "desc")}
+                  accept=".pdf,.docx,.doc,.pptx,.ppt,.txt"
+                  className="hidden"
                 />
               </div>
 
-              {/* Column 2: Student solution */}
-              <div className="space-y-3 flex flex-col">
-                <div className="flex justify-between items-center">
-                  <label className="text-sm font-bold text-slate-800">2. פתרון המטלה שכתבת (Your Solution)</label>
-                  <button
-                    type="button"
+              {/* Dropzone 2: Student Solution */}
+              <div className="space-y-3">
+                <label className="text-sm font-bold text-slate-800 block">2. קובץ הפתרון שהגשת (Student's Solution)</label>
+                
+                {solutionFile ? (
+                  <div className="border border-teal-200 bg-teal-50/20 rounded-2xl p-6 flex flex-col items-center justify-center relative min-h-[16rem]">
+                    <div className="w-12 h-12 rounded-xl bg-teal-500/10 flex items-center justify-center text-teal-600 mb-3 text-2xl">📄</div>
+                    <p className="font-bold text-slate-800 text-sm text-center truncate w-full max-w-[200px]">{solutionFile.name}</p>
+                    <p className="text-slate-400 text-xs mt-1">{(solutionFile.size / 1024).toFixed(1)} KB</p>
+                    <button
+                      onClick={() => removeFile("sol")}
+                      className="mt-4 px-3 py-1.5 bg-white border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-lg cursor-pointer transition-all"
+                    >
+                      🗑️ הסר קובץ
+                    </button>
+                  </div>
+                ) : (
+                  <div
                     onClick={() => solFileRef.current?.click()}
-                    disabled={isLoadingSolFile}
-                    className="text-xs font-bold text-teal-600 hover:text-teal-700 flex items-center gap-1 cursor-pointer bg-teal-50 px-2.5 py-1 rounded-lg"
+                    className="border-2 border-dashed border-slate-200 hover:border-teal-400 bg-slate-50/50 hover:bg-teal-50/5 rounded-2xl p-6 flex flex-col items-center justify-center cursor-pointer min-h-[16rem] transition-all group"
                   >
-                    {isLoadingSolFile ? "מפענח..." : "📤 העלה PDF / Word / PPTX"}
-                  </button>
-                  <input
-                    type="file"
-                    ref={solFileRef}
-                    onChange={(e) => handleFileUpload(e, "sol")}
-                    accept=".pdf,.txt,.docx,.doc,.pptx,.ppt"
-                    className="hidden"
-                  />
-                </div>
-                <textarea
-                  value={solutionText}
-                  onChange={(e) => setSolutionText(e.target.value)}
-                  placeholder="הדבק כאן את קוד הפתרון שלך, תיאור הארכיטקטורה שמימשת או קובץ הטקסט של הפרויקט..."
-                  className="w-full h-80 px-4 py-3 border border-slate-200 rounded-2xl focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none transition-all text-left font-mono text-xs leading-relaxed resize-none"
-                  dir="ltr"
+                    <div className="w-12 h-12 rounded-xl bg-slate-100 group-hover:bg-teal-100/50 flex items-center justify-center text-slate-500 group-hover:text-teal-600 mb-3 text-xl transition-all">📥</div>
+                    <p className="font-bold text-slate-700 text-sm">גרור והשלך קובץ לכאן</p>
+                    <p className="text-slate-400 text-xs mt-1">או לחץ לבחירת קובץ מהמחשב</p>
+                    <p className="text-slate-355 text-[10px] mt-4 font-semibold">פורמטים נתמכים: PDF, Docx, PPTX, TXT</p>
+                  </div>
+                )}
+                
+                <input
+                  type="file"
+                  ref={solFileRef}
+                  onChange={(e) => handleFileChange(e, "sol")}
+                  accept=".pdf,.docx,.doc,.pptx,.ppt,.txt"
+                  className="hidden"
                 />
               </div>
+
             </div>
 
-            {/* Wizard options: Difficulty and Questions Count */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4 border-t border-slate-100">
+            {/* Options grid (Language + Difficulty + Questions Count) */}
+            <div className="space-y-6 pt-6 border-t border-slate-100">
               
-              {/* Difficulty Level Selector */}
+              {/* Language Selector */}
               <div className="space-y-2">
-                <label className="text-sm font-bold text-slate-800 block">רמת קושי של שאלות ההגנה</label>
-                <div className="flex gap-3 max-w-md">
-                  {(["easy", "medium", "hard"] as const).map((level) => {
-                    const label = level === "easy" ? "קל" : level === "medium" ? "בינוני" : "קשה";
-                    const color = level === "easy" ? "hover:border-emerald-350" : level === "medium" ? "hover:border-amber-350" : "hover:border-red-350";
-                    const activeColor = level === "easy" ? "bg-emerald-600 border-emerald-600 text-white shadow-emerald-50" :
-                                        level === "medium" ? "bg-amber-500 border-amber-500 text-white shadow-amber-50" :
-                                        "bg-red-600 border-red-600 text-white shadow-red-50";
-                    
-                    return (
-                      <button
-                        key={level}
-                        type="button"
-                        onClick={() => setDifficultyLevel(level)}
-                        className={`flex-1 py-2.5 text-sm font-bold rounded-xl border transition-all cursor-pointer ${
-                          difficultyLevel === level
-                            ? `${activeColor} shadow-md`
-                            : `bg-white border-slate-200 text-slate-600 ${color}`
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
+                <label className="text-sm font-bold text-slate-800 block">שפת הסימולציה וההערכה (Language)</label>
+                <div className="flex gap-3 max-w-xs">
+                  <button
+                    type="button"
+                    onClick={() => setLanguage("hebrew")}
+                    className={`flex-1 py-2 rounded-xl border font-bold text-sm transition-all cursor-pointer ${
+                      language === "hebrew"
+                        ? "bg-teal-600 border-teal-600 text-white shadow-md shadow-teal-50"
+                        : "bg-white border-slate-200 text-slate-600 hover:border-teal-50"
+                    }`}
+                  >
+                    עברית (Hebrew)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLanguage("english")}
+                    className={`flex-1 py-2 rounded-xl border font-bold text-sm transition-all cursor-pointer ${
+                      language === "english"
+                        ? "bg-teal-600 border-teal-600 text-white shadow-md shadow-teal-50"
+                        : "bg-white border-slate-200 text-slate-600 hover:border-teal-50"
+                    }`}
+                  >
+                    אנגלית (English)
+                  </button>
                 </div>
               </div>
 
-              {/* Questions count select */}
-              <div className="space-y-2">
-                <label className="text-sm font-bold text-slate-800 block">מספר שאלות הגנה מבוקש (5 עד 10 שאלות)</label>
-                <div className="flex gap-2 flex-wrap">
-                  {[5, 6, 7, 8, 9, 10].map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      onClick={() => setNumQuestions(n)}
-                      className={`w-12 h-10 flex items-center justify-center text-sm font-bold rounded-xl border transition-all cursor-pointer ${
-                        numQuestions === n
-                          ? "bg-teal-600 border-teal-600 text-white shadow-md shadow-teal-50"
-                          : "bg-white border-slate-200 text-slate-600 hover:border-slate-350"
-                      }`}
-                    >
-                      {n}
-                    </button>
-                  ))}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Difficulty Level Selector */}
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-800 block">רמת קושי של שאלות ההגנה</label>
+                  <div className="flex gap-3 max-w-md">
+                    {(["easy", "medium", "hard"] as const).map((level) => {
+                      const label = level === "easy" ? "קל" : level === "medium" ? "בינוני" : "קשה";
+                      const color = level === "easy" ? "hover:border-emerald-350" : level === "medium" ? "hover:border-amber-350" : "hover:border-red-350";
+                      const activeColor = level === "easy" ? "bg-emerald-600 border-emerald-600 text-white shadow-emerald-50" :
+                                          level === "medium" ? "bg-amber-500 border-amber-500 text-white shadow-amber-50" :
+                                          "bg-red-600 border-red-600 text-white shadow-red-50";
+                      
+                      return (
+                        <button
+                          key={level}
+                          type="button"
+                          onClick={() => setDifficultyLevel(level)}
+                          className={`flex-1 py-2.5 text-sm font-bold rounded-xl border transition-all cursor-pointer ${
+                            difficultyLevel === level
+                              ? `${activeColor} shadow-md`
+                              : `bg-white border-slate-200 text-slate-600 ${color}`
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Questions count select */}
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-800 block">מספר שאלות הגנה מבוקש (5 עד 10 שאלות)</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {[5, 6, 7, 8, 9, 10].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setNumQuestions(n)}
+                        className={`w-12 h-10 flex items-center justify-center text-sm font-bold rounded-xl border transition-all cursor-pointer ${
+                          numQuestions === n
+                            ? "bg-teal-600 border-teal-600 text-white shadow-md shadow-teal-50"
+                            : "bg-white border-slate-200 text-slate-600 hover:border-slate-350"
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
+
             </div>
 
             {error && (
@@ -389,19 +426,42 @@ export default function InterviewSimulatorPage() {
               </div>
             )}
 
-            {isGenerating ? (
-              <div className="bg-teal-50/50 border border-teal-100 rounded-2xl p-6 flex flex-col items-center justify-center gap-3">
-                <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-teal-600"></div>
-                <p className="text-teal-800 font-bold text-sm">מנתח את המטלה והפתרון ומייצר שאלות הגנה מותאמות אישית לרמת {difficultyLevel === "easy" ? "קל" : difficultyLevel === "medium" ? "בינוני" : "קשה"}...</p>
+            <button
+              onClick={handleStartDefense}
+              className="w-full py-4 bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-bold rounded-2xl shadow-lg shadow-teal-100 hover:shadow-xl hover:translate-y-[-1px] transition-all cursor-pointer text-center text-lg active:scale-98"
+            >
+              התחילו בהגנה על המטלה
+            </button>
+          </div>
+        )}
+
+        {/* Loading Overlay during analysis */}
+        {isGenerating && (
+          <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-900/60 backdrop-blur-md text-white font-sans">
+            <div className="bg-slate-800 border border-slate-700/80 rounded-3xl p-10 max-w-md w-full flex flex-col items-center justify-center gap-6 shadow-2xl">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-teal-400"></div>
+              
+              <div className="text-center">
+                <h3 className="text-lg font-black tracking-tight mb-1">מנתח ומעבד את המשימה...</h3>
+                <p className="text-slate-400 text-xs">נא להמתין, המערכת מייצרת שאלות הגנה מותאמות אישית.</p>
               </div>
-            ) : (
-              <button
-                onClick={handleStartDefense}
-                className="w-full py-4 bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-bold rounded-2xl shadow-lg shadow-teal-100 hover:shadow-xl hover:translate-y-[-1px] transition-all cursor-pointer text-center text-lg active:scale-98"
-              >
-                התחילו בהגנה על המטלה
-              </button>
-            )}
+
+              {/* Progress Steps Indicators */}
+              <div className="w-full mt-4 space-y-3.5 text-right border-t border-slate-700/60 pt-5 text-sm font-semibold">
+                <div className={`flex items-center justify-between ${generationStep >= 1 ? "text-teal-400" : "text-slate-500"}`}>
+                  <span>מעלה קבצים מקור לשרת ה-AI של Google...</span>
+                  <span>{generationStep > 1 ? "✓" : "⚡"}</span>
+                </div>
+                <div className={`flex items-center justify-between ${generationStep >= 2 ? "text-teal-400" : "text-slate-500"}`}>
+                  <span>מחפש תחומי הגנה בארכיטקטורה ב-Chroma DB...</span>
+                  <span>{generationStep > 2 ? "✓" : generationStep === 2 ? "⚡" : "○"}</span>
+                </div>
+                <div className={`flex items-center justify-between ${generationStep >= 3 ? "text-teal-400" : "text-slate-500"}`}>
+                  <span>Gemini מנתח ומייצר שאלות הגנה מותאמות...</span>
+                  <span>{generationStep === 3 ? "⚡" : "○"}</span>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -567,10 +627,10 @@ export default function InterviewSimulatorPage() {
 
                     {/* Rationale feedback */}
                     <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 text-xs leading-relaxed text-slate-600">
-                      <span className="font-bold text-teal-800 block mb-1">משוב הבוחן (בעברית):</span>
+                      <span className="font-bold text-teal-800 block mb-1">משוב הבוחן:</span>
                       <p>{item.rationale}</p>
                     </div>
-
+ 
                     {/* Phrasing comparison grid */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-50 pt-4">
                       {/* Candidate Answer */}
@@ -580,19 +640,19 @@ export default function InterviewSimulatorPage() {
                           {answers[item.question_id] || "לא ניתנה תשובה."}
                         </p>
                       </div>
-
+ 
                       {/* Phrasing correction */}
                       <div className="bg-teal-50/20 border border-teal-50/80 rounded-xl p-4 space-y-1">
-                        <span className="text-xs font-bold text-teal-700 block">ניסוח מומלץ באנגלית (Senior Technical Phrasing):</span>
+                        <span className="text-xs font-bold text-teal-700 block">שדרוג התשובה שלך:</span>
                         <p className="text-xs text-slate-800 font-bold text-left font-mono leading-relaxed" dir="ltr">
                           {item.improved_phrasing}
                         </p>
                       </div>
                     </div>
-
+ 
                     {/* Ideal Model Answer */}
                     <div className="bg-emerald-50/10 border-t border-emerald-50/50 pt-3">
-                      <span className="text-xs font-bold text-emerald-800 block">תשובת מודל אידיאלית (Ideal Answer Reference):</span>
+                      <span className="text-xs font-bold text-emerald-800 block">הפתרון הטכני המלא:</span>
                       <p className="text-xs text-slate-500 text-left font-mono leading-relaxed mt-1" dir="ltr">
                         {item.model_answer}
                       </p>

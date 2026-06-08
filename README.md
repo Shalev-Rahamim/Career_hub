@@ -5,6 +5,8 @@ An automated, high-efficiency platform designed to accelerate candidate job read
 ---
 
 ## Repository Documentation
+* **Project Handover Manual (מסמך העברת מקל):** [HANDOVER.md](file:///c:/Users/Shalev/Coding/CyberProAi/Career_Hub/HANDOVER.md)
+* **Project Roadmap & Epics (ניהול ומשימות פרויקט):** [ROADMAP.md](file:///c:/Users/Shalev/Coding/CyberProAi/Career_Hub/ROADMAP.md)
 * **Product Requirements:** [PRD.md](file:///c:/Users/Shalev/Coding/CyberProAi/Career_Hub/PRD.md)
 * **API Specifications:** [api_contracts.md](file:///c:/Users/Shalev/Coding/CyberProAi/Career_Hub/api_contracts.md)
 

@@ -37,7 +37,7 @@ To ensure independent development cycles and rapid deployment within 48 hours, t
 
 ### Feature A: AI Resume Builder & Optimizer
 
-*   **User Flow:** User uploads/pastes resume → FastAPI processes and analyzes using LLM (Gemini 1.5 Flash) → Next.js renders:
+*   **User Flow:** User uploads/pastes resume → FastAPI processes and analyzes using LLM (Gemini 3.5 Flash) → Next.js renders:
     *   Left Panel (Top): Actual PDF in iframe viewport with custom zoom parameters.
     *   Right Panel (Top): Circular score badge and points to keep vs. improve.
     *   Left Panel (Bottom): Optimized text (RTL/LTR dynamic text alignment).
@@ -48,15 +48,15 @@ To ensure independent development cycles and rapid deployment within 48 hours, t
 
 ### Feature B: AI Technical Home Assignment Defense Simulator
 
-*   **User Flow:** User uploads or pastes their completed project code, architecture layout, or project documentation → FastAPI queries Chroma DB for conceptual technical questions (architecture, optimization, performance scaling, security, design patterns) -> Gemini 1.5 Flash synthesizes 3-5 tailored project defense questions -> Next.js displays simulation wizard -> User submits answers -> FastAPI grades answers using structured output -> Next.js displays score dashboard with model answer comparisons.
+*   **User Flow:** User uploads or pastes their completed project code, architecture layout, or project documentation → FastAPI queries Chroma DB for conceptual technical questions (architecture, optimization, performance scaling, security, design patterns) -> Gemini 3.5 Flash synthesizes 3-5 tailored project defense questions -> Next.js displays simulation wizard -> User submits answers -> FastAPI grades answers using structured output -> Next.js displays score dashboard with model answer comparisons.
 *   **Functional Requirements:**
-    *   Home Assignment Input: Support direct code text pasting or project docs.
-    *   Project Defense Wizard: Multi-step layout presenting synthesized questions with distinct answer blocks.
-    *   Evaluation Matrix: Dynamic grading providing score per question, technical rationale, perfect model answers, and phrasing corrections.
+*   Home Assignment Input: Support direct code text pasting or project docs.
+*   Project Defense Wizard: Multi-step layout presenting synthesized questions with distinct answer blocks.
+*   Evaluation Matrix: Dynamic grading providing score per question, technical rationale, perfect model answers, and phrasing corrections.
 *   **Technical Integration:**
     *   FastAPI Endpoints: `POST /api/interview/generate-questions` and `POST /api/interview/evaluate`.
     *   Vector Store: Chroma DB running locally/in-memory with `GoogleGenerativeAIEmbeddings` (text-embedding-004) loaded with 15+ standard senior design and technical evaluation questions.
-    *   AI Layer: LangChain `ChatGoogleGenerativeAI` with Pydantic structured output mapping.
+    *   AI Layer: Google GenAI SDK with Pydantic structured output mapping.
 
 ---
 
@@ -66,7 +66,7 @@ To ensure independent development cycles and rapid deployment within 48 hours, t
 
 *   **Frontend:** Next.js, React, Tailwind CSS (Hebrew RTL Responsive Layout)
 *   **Backend:** FastAPI (Python), Uvicorn, SQLite (Relational database)
-*   **AI Layer:** LangChain (LCEL) with ChatGoogleGenerativeAI (Gemini 1.5/3.5 Flash)
+*   **AI Layer:** LangChain (LCEL) & Google GenAI SDK (Gemini 3.5 Flash)
 *   **Vector Database:** Chroma DB (locally indexed bank of architectural/design pattern evaluation questions)
 
 ### Core Schema Design
@@ -77,6 +77,8 @@ To ensure independent development cycles and rapid deployment within 48 hours, t
 ├─────────────────────────────────────────────────────────────────────────┤
 │  Users Table:                                                           │
 │  - user_id (UUID, Primary Key)                                          │
+│  - email (String, Nullable)                                             │
+│  - created_at (DateTime)                                                │
 │                                                                         │
 │  Resumes Table (Feature A):                                             │
 │  - resume_id (UUID, Primary Key)                                        │
@@ -86,12 +88,26 @@ To ensure independent development cycles and rapid deployment within 48 hours, t
 │  - score (INTEGER)                                                      │
 │  - points_to_keep (JSON)                                                │
 │  - points_to_improve (JSON)                                             │
+│  - dynamic_recommendations (JSON)                                       │
+│  - created_at (DateTime)                                                │
+│                                                                         │
+│  ChatMessages Table (Feature A):                                        │
+│  - message_id (UUID, Primary Key)                                       │
+│  - session_id (String, Index)                                           │
+│  - role (String)                                                        │
+│  - content (TEXT)                                                       │
+│  - created_at (DateTime)                                                │
 │                                                                         │
 │  Interviews Table (Feature B):                                          │
 │  - interview_id (UUID, Primary Key)                                     │
 │  - user_id (Foreign Key)                                                │
-│  - assignment_text (TEXT)                                               │
+│  - assignment_file_uri (String)                                         │
+│  - solution_file_uri (String)                                           │
+│  - difficulty_level (String)                                            │
+│  - num_questions (Integer)                                              │
+│  - language (String)                                                    │
 │  - questions_json (JSON)                                                │
+│  - created_at (DateTime)                                                │
 │                                                                         │
 │  InterviewEvaluations Table (Feature B):                                │
 │  - evaluation_id (UUID, Primary Key)                                    │
@@ -99,5 +115,6 @@ To ensure independent development cycles and rapid deployment within 48 hours, t
 │  - overall_score (INTEGER)                                              │
 │  - general_feedback (TEXT)                                              │
 │  - evaluations_json (JSON)                                              │
+│  - created_at (DateTime)                                                │
 └─────────────────────────────────────────────────────────────────────────┘
 ```

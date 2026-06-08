@@ -62,8 +62,6 @@ class AnswerItem(BaseModel):
 
 class EvaluateInterviewRequest(BaseModel):
     interview_id: str = Field(description="UUID of the interview simulation session")
-    assignment_description: str = Field(description="The home assignment instructions/guidelines")
-    solution_text: str = Field(description="The student's completed solution/code/documentation")
     answers: List[AnswerItem] = Field(description="The candidate's answers to the generated questions")
 
 
