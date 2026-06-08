@@ -2,9 +2,9 @@
 
 ## 1. Project Overview
 
-* **Project Name:** AI-Driven Career Readiness Hub
-* **Core Value Proposition:** An automated, high-efficiency platform designed to accelerate candidate job readiness through decoupled AI services: a structural resume enhancer/generator and a contextual job-description-to-interview-simulator.
-* **Target Audience:** Job seekers, college graduates, and professionals transitioning between technical or managerial roles.
+*   **Project Name:** AI-Driven Career Readiness Hub (Project Defense Edition)
+*   **Core Value Proposition:** An automated, high-efficiency platform designed to accelerate candidate job readiness through decoupled AI services: a structural resume enhancer/generator and a project-specific Home Assignment Defense Simulator.
+*   **Target Audience:** Job seekers, college graduates, and professionals preparing for technical interviews, technical reviews, and home assignment defense presentations.
 
 ---
 
@@ -22,12 +22,12 @@ To ensure independent development cycles and rapid deployment within 48 hours, t
            /api/resume/* Endpoints        /api/interview/* Endpoints
                       │                               │
             ┌─────────▼─────────┐           ┌─────────▼─────────┐
-            │   Resume Service  │           │ Interview Service │
+            │   Resume Service  │           │ Defense Service   │
             └─────────┬─────────┘           └─────────┬─────────┘
                       │                               │
             ┌─────────▼─────────┐           ┌─────────▼─────────┐
             │ LangChain Prompt  │           │ Vector Store RAG  │
-            │ (Structured JSON) │           │  & Evaluation LLM │
+            │ (Structured JSON) │           │ (Architecture DB) │
             └───────────────────┘           └───────────────────┘
 ```
 
@@ -37,25 +37,26 @@ To ensure independent development cycles and rapid deployment within 48 hours, t
 
 ### Feature A: AI Resume Builder & Optimizer
 
-* **User Flow:** User uploads a resume text/file → FastAPI processes and sends structured input to LLM → Next.js displays a side-by-side comparative analysis and a polished raw text layout.
-* **Functional Requirements:**
-  * Single-field input supporting direct raw text pasting or PDF extraction.
-  * Comparative UI: Side-by-side view highlighting original text vs. AI recommendations.
-  * Output Engine: Generates an optimized, ready-to-copy text block structured for professional submission.
-* **Technical Integration:**
-  * FastAPI Endpoints: `POST /api/resume/analyze` and `POST /api/resume/generate`.
-  * AI Layer: LangChain `PromptTemplate` utilizing Pydantic structured output formatting to guarantee frontend parsing integrity.
+*   **User Flow:** User uploads/pastes resume → FastAPI processes and analyzes using LLM (Gemini 1.5 Flash) → Next.js renders:
+    *   Left Panel (Top): Actual PDF in iframe viewport with custom zoom parameters.
+    *   Right Panel (Top): Circular score badge and points to keep vs. improve.
+    *   Left Panel (Bottom): Optimized text (RTL/LTR dynamic text alignment).
+    *   Right Panel (Bottom): Inline contextual revision chat window.
+*   **Technical Integration:**
+    *   FastAPI Endpoints: `POST /api/resume/analyze` and `POST /api/resume/chat`.
+    *   AI Layer: LangChain structured Pydantic schema validation.
 
-### Feature B: AI Interview & Test Simulator
+### Feature B: AI Technical Home Assignment Defense Simulator
 
-* **User Flow:** User pastes a target Job Description (JD) → FastAPI queries vector database for contextual technical questions → System serves a dynamic quiz → User submits answers → System computes granular score and analytical feedback.
-* **Functional Requirements:**
-  * Contextual Querying: Custom text area for target job description inputs.
-  * Simulation Interface: Dynamic rendering of 3 to 5 tailored technical/behavioral questions with distinct response blocks.
-  * Analytical Feedback Loop: Granular grading matrix providing specific rationale, model answers, and phrasing corrections.
-* **Technical Integration:**
-  * FastAPI Endpoints: `POST /api/interview/generate-questions` and `POST /api/interview/evaluate`.
-  * AI Layer: Vector Search (Chroma/Pinecone) storing an indexed bank of standard technical questions. The top matches are fed into the LLM context to synthesize job-specific questions.
+*   **User Flow:** User uploads or pastes their completed project code, architecture layout, or project documentation → FastAPI queries Chroma DB for conceptual technical questions (architecture, optimization, performance scaling, security, design patterns) -> Gemini 1.5 Flash synthesizes 3-5 tailored project defense questions -> Next.js displays simulation wizard -> User submits answers -> FastAPI grades answers using structured output -> Next.js displays score dashboard with model answer comparisons.
+*   **Functional Requirements:**
+    *   Home Assignment Input: Support direct code text pasting or project docs.
+    *   Project Defense Wizard: Multi-step layout presenting synthesized questions with distinct answer blocks.
+    *   Evaluation Matrix: Dynamic grading providing score per question, technical rationale, perfect model answers, and phrasing corrections.
+*   **Technical Integration:**
+    *   FastAPI Endpoints: `POST /api/interview/generate-questions` and `POST /api/interview/evaluate`.
+    *   Vector Store: Chroma DB running locally/in-memory with `GoogleGenerativeAIEmbeddings` (text-embedding-004) loaded with 15+ standard senior design and technical evaluation questions.
+    *   AI Layer: LangChain `ChatGoogleGenerativeAI` with Pydantic structured output mapping.
 
 ---
 
@@ -63,9 +64,10 @@ To ensure independent development cycles and rapid deployment within 48 hours, t
 
 ### System Stack
 
-* **Frontend:** Next.js, React, Tailwind CSS (Responsive Layout)
-* **Backend:** FastAPI (Python), Uvicorn
-* **Database & Vector Store:** SQLite / PostgreSQL (Relational Data), Chroma DB (Vector Indexing)
+*   **Frontend:** Next.js, React, Tailwind CSS (Hebrew RTL Responsive Layout)
+*   **Backend:** FastAPI (Python), Uvicorn, SQLite (Relational database)
+*   **AI Layer:** LangChain (LCEL) with ChatGoogleGenerativeAI (Gemini 1.5/3.5 Flash)
+*   **Vector Database:** Chroma DB (locally indexed bank of architectural/design pattern evaluation questions)
 
 ### Core Schema Design
 
@@ -81,22 +83,21 @@ To ensure independent development cycles and rapid deployment within 48 hours, t
 │  - user_id (Foreign Key)                                                │
 │  - original_text (TEXT)                                                 │
 │  - optimized_text (TEXT)                                                │
-│  - review_json (JSONB)                                                  │
+│  - score (INTEGER)                                                      │
+│  - points_to_keep (JSON)                                                │
+│  - points_to_improve (JSON)                                             │
 │                                                                         │
 │  Interviews Table (Feature B):                                          │
 │  - interview_id (UUID, Primary Key)                                     │
 │  - user_id (Foreign Key)                                                │
-│  - job_description (TEXT)                                               │
-│  - qa_pairs_json (JSONB)                                                │
-│  - score (INTEGER)                                                      │
+│  - assignment_text (TEXT)                                               │
+│  - questions_json (JSON)                                                │
+│                                                                         │
+│  InterviewEvaluations Table (Feature B):                                │
+│  - evaluation_id (UUID, Primary Key)                                    │
+│  - interview_id (Foreign Key)                                           │
+│  - overall_score (INTEGER)                                              │
+│  - general_feedback (TEXT)                                              │
+│  - evaluations_json (JSON)                                              │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
-
----
-
-## 5. Deployment & MVP Roadmap
-
-* **Phase 1: Environment Setup & API Contracts (Hours 1–4):** Monorepo initialization (`/frontend`, `/backend`). Define explicit JSON request/response bodies for all endpoints to allow parallel frontend and backend development.
-* **Phase 2: Core Architecture Development (Hours 4–32):** Feature A engineer implements prompt chaining and comparative UI; Feature B engineer builds the vector retrieval pipeline and quiz sequence.
-* **Phase 3: Integration & Testing (Hours 32–44):** Cross-feature connection, manual testing of full user flows, error state handling, and verification of structured AI responses.
-* **Phase 4: Deployment & Documentation (Hours 44–48):** Deploying frontend via Vercel and backend via Render. Finalizing `.env.example` configurations and launching the presentation deck.

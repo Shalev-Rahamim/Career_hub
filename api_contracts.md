@@ -1,190 +1,164 @@
 # API Contracts Specification
 
-This document defines the interface between the **Frontend** (Next.js) and the **Backend** (FastAPI). All endpoints must adhere strictly to these JSON structures.
+This document defines the interface between the **Frontend** (Next.js) and the **Backend** (FastAPI) for both decoupled modules.
 
 ---
 
 ## Headers (Global)
-All requests must include a client-side generated user identifier in the headers to track sessions.
-* **Header Key:** `X-User-ID`
-* **Format:** `UUIDv4` (e.g., `123e4567-e89b-12d3-a456-426614174000`)
+All requests must include a user identifier in the headers to track sessions.
+*   **Header Key:** `X-User-ID`
+*   **Format:** `UUIDv4`
 
 ---
 
 ## Feature A: AI Resume Builder & Optimizer
 
 ### 1. Analyze Resume
-Analyzes an uploaded resume PDF file and returns granular structural recommendations.
-
-* **Endpoint:** `POST /api/resume/analyze`
-* **Content-Type:** `multipart/form-data`
-* **Request Payload:**
-  * `file`: Binary (PDF file, maximum size 5MB)
-* **Response Payload (`application/json`):**
+Analyzes an uploaded resume PDF file and returns structured recommendations.
+*   **Endpoint:** `POST /api/resume/analyze`
+*   **Content-Type:** `multipart/form-data`
+*   **Request Payload:**
+    *   `file`: Binary (PDF file, maximum size 5MB)
+    *   `raw_text`: String (optional fallback)
+    *   `language`: String ("hebrew" or "english")
+*   **Response Payload (`application/json`):**
 ```json
 {
   "resume_id": "8a9c3d4e-1234-5678-abcd-ef0123456789",
   "original_text": "Full text extracted from the PDF...",
-  "strengths": [
-    "Strong technical stack listed in the skills section.",
-    "Clear metrics shown in the latest software engineering role."
+  "score": 82,
+  "points_to_keep": [
+    "Strong technical stack in React & FastAPI.",
+    "Measurable metrics shown in software engineering roles."
   ],
-  "weaknesses": [
-    "Summary section is too generic.",
-    "Lack of measurable achievements in the project section."
+  "points_to_improve": [
+    "Summary section contains generic descriptions.",
+    "Needs more quantitative results in the projects section."
   ],
-  "recommendations": [
+  "dynamic_recommendations": [
     {
       "recommendation_id": "rec-1",
       "section": "Professional Summary",
-      "original_text": "Experienced software engineer looking for a challenging role...",
-      "suggested_text": "Result-oriented Software Engineer with 3+ years of experience specializing in React and Python, seeking to leverage full-stack expertise to build high-performance systems...",
-      "rationale": "Replaces generic passive phrasing with active, skill-focused impact words."
-    },
-    {
-      "recommendation_id": "rec-2",
-      "section": "Experience - CyberPro Tech",
-      "original_text": "Responsible for maintaining backend systems and APIs.",
-      "suggested_text": "Optimized and maintained 15+ backend FastAPI microservices, reducing server latency by 20% and improving overall test coverage to 90%.",
-      "rationale": "Adds concrete metrics and specifies the technologies used."
+      "original_text": "Experienced software developer seeking a position...",
+      "suggested_text": "Results-oriented Software Engineer with a track record of building performant APIs...",
+      "rationale": "Replaces generic passive phrasing with active, skill-focused terms."
     }
-  ]
+  ],
+  "optimized_resume_text": "Optimized resume text block..."
 }
 ```
 
-### 2. Generate Optimized Resume
-Applies selected/edited recommendations to produce the final optimized raw text block.
-
-* **Endpoint:** `POST /api/resume/generate`
-* **Content-Type:** `application/json`
-* **Request Payload:**
+### 2. Live Resume Chat
+Interactively chat with the AI about resume modifications.
+*   **Endpoint:** `POST /api/resume/chat`
+*   **Content-Type:** `application/json`
+*   **Request Payload:**
 ```json
 {
+  "session_id": "session-12345",
   "resume_id": "8a9c3d4e-1234-5678-abcd-ef0123456789",
-  "original_text": "Full text extracted from the PDF...",
-  "applied_recommendations": [
-    {
-      "recommendation_id": "rec-1",
-      "suggested_text": "Result-oriented Software Engineer with 3+ years of experience specializing in React and Python, seeking to leverage full-stack expertise to build high-performance systems..."
-    },
-    {
-      "recommendation_id": "rec-2",
-      "suggested_text": "Optimized and maintained 15+ backend FastAPI microservices, reducing server latency by 20% and improving overall test coverage to 90%."
-    }
-  ]
+  "user_message": "Can you rewrite my project summary to sound more senior?"
 }
 ```
-* **Response Payload (`application/json`):**
+*   **Response Payload (`application/json`):**
 ```json
 {
-  "optimized_text": "Result-oriented Software Engineer with 3+ years of experience... \n\nEXPERIENCE\nOptimized and maintained 15+ backend FastAPI microservices..."
+  "response": "Here is an updated version for your project section...",
+  "updated_resume_text": "Updated full resume text..."
 }
 ```
 
 ---
 
-## Feature B: AI Interview & Test Simulator
+## Feature B: AI Home Assignment Defense Simulator
 
-### 3. Generate Interview Questions
-Queries the vector database using the target job description and generates tailored interview questions.
-
-* **Endpoint:** `POST /api/interview/generate-questions`
-* **Content-Type:** `application/json`
-* **Request Payload:**
+### 3. Generate Assignment Defense Questions
+Queries the vector database using the assignment code/architecture and generates project defense questions.
+*   **Endpoint:** `POST /api/interview/generate-questions`
+*   **Content-Type:** `application/json`
+*   **Request Payload:**
 ```json
 {
-  "job_description": "We are seeking a Backend Engineer with experience in Python, FastAPI, PostgreSQL, and vector databases. The role involves building scalable APIs and integrations...",
+  "assignment_text": "class DatabaseConnector:\n    def __init__(self):\n        self.db = sqlite3.connect('test.db')...",
   "num_questions": 3
 }
 ```
-* **Response Payload (`application/json`):**
+*   **Response Payload (`application/json`):**
 ```json
 {
   "interview_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
   "questions": [
     {
       "question_id": "q-1",
-      "question_text": "Explain how you optimize query performance in PostgreSQL when dealing with large datasets.",
-      "category": "Technical"
+      "question_text": "In your DatabaseConnector class, you are connecting directly on instantiation without connection pooling. How will this scale under high concurrent loads?",
+      "category": "Architecture"
     },
     {
       "question_id": "q-2",
-      "question_text": "Describe a scenario where you had to design a FastAPI endpoint supporting large file uploads. How did you structure it?",
-      "category": "Technical"
+      "question_text": "How did you manage database connection closures in case of query exceptions?",
+      "category": "Stability"
     },
     {
       "question_id": "q-3",
-      "question_text": "Tell me about a time you had a conflict with a team member regarding system architecture. How did you resolve it?",
-      "category": "Behavioral"
+      "question_text": "Did you apply any database constraints or schema migrations for handling entity growth over time?",
+      "category": "Database Design"
     }
   ]
 }
 ```
 
-### 4. Evaluate Interview Answers
-Evaluates the user's submitted answers against the job description and generates analytical feedback.
-
-* **Endpoint:** `POST /api/interview/evaluate`
-* **Content-Type:** `application/json`
-* **Request Payload:**
+### 4. Evaluate Assignment Defense Answers
+Evaluates the candidate's answers against design patterns and provides structured grading feedback.
+*   **Endpoint:** `POST /api/interview/evaluate`
+*   **Content-Type:** `application/json`
+*   **Request Payload:**
 ```json
 {
   "interview_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "job_description": "We are seeking a Backend Engineer with experience in Python, FastAPI, PostgreSQL, and vector databases...",
+  "assignment_text": "class DatabaseConnector:\n    def __init__(self)...",
   "answers": [
     {
       "question_id": "q-1",
-      "answer_text": "I would add indexes to the foreign keys and use EXPLAIN ANALYZE to find slow parts of the query."
+      "answer_text": "I would use a pool like SQLAlchemy SessionLocal to reuse connections."
     },
     {
       "question_id": "q-2",
-      "answer_text": "I would use FastAPI's UploadFile parameter, which reads files in memory or chunks them to disk to avoid memory overflow."
+      "answer_text": "I used a try/finally block to ensure close() is called."
     },
     {
       "question_id": "q-3",
-      "answer_text": "We disagreed on using PostgreSQL vs MongoDB. I set up a quick benchmark to show postgres performance under our query load, and we agreed based on data."
+      "answer_text": "I haven't thought about migrations, but I would probably use Alembic."
     }
   ]
 }
 ```
-* **Response Payload (`application/json`):**
+*   **Response Payload (`application/json`):**
 ```json
 {
-  "overall_score": 85,
-  "general_feedback": "Overall, the responses show solid practical knowledge of PostgreSQL indexing, FastAPI file streaming, and data-driven conflict resolution.",
+  "overall_score": 88,
+  "general_feedback": "The candidate shows strong awareness of stability practices but should study scaling strategies.",
   "evaluations": [
     {
       "question_id": "q-1",
-      "score": 80,
-      "rationale": "Correctly identified indexing and EXPLAIN ANALYZE. Could have mentioned database connection pooling or partition strategies for a senior role.",
-      "model_answer": "Use connection pooling, define partial or composite indexes based on query filters, restructure joins, and inspect query plans using EXPLAIN ANALYZE.",
-      "improved_phrasing": "To optimize performance, I analyze slow queries using EXPLAIN ANALYZE, apply indexes (B-Tree or composite) on filtered columns, and ensure efficient table joins."
+      "score": 90,
+      "rationale": "Correctly identified connection pooling using SQLAlchemy SessionLocal.",
+      "model_answer": "To scale database connectivity under high load, implement connection pooling (e.g., SQLAlchemy QueuePool) to limit active open connections and reuse connections.",
+      "improved_phrasing": "To handle high concurrent traffic, I would replace the single-connection instantiation with a connection pooling pool manager like SQLAlchemy QueuePool."
     },
     {
       "question_id": "q-2",
-      "score": 90,
-      "rationale": "Excellent understanding of FastAPI's UploadFile chunking mechanics.",
-      "model_answer": "Use FastAPI's UploadFile which utilizes temporary file storage, and stream chunks of data directly to disk or S3 to keep memory consumption low.",
-      "improved_phrasing": "I use FastAPI's UploadFile to stream file chunks asynchronously, preventing memory bloating even with multi-gigabyte uploads."
+      "score": 95,
+      "rationale": "Accurately used try/finally blocks to protect resource release.",
+      "model_answer": "Ensure all database queries run inside try-except-finally blocks, explicitly calling conn.close() in the finally block.",
+      "improved_phrasing": "I wrapped queries in try-finally blocks, guaranteeing that database connections close under any exception state."
     },
     {
       "question_id": "q-3",
-      "score": 85,
-      "rationale": "Good behavioral response emphasizing quantitative comparison rather than emotional arguing.",
-      "model_answer": "Collaborative discussion using data benchmarks, proof-of-concept tests, and consensus building to resolve technical disagreements.",
-      "improved_phrasing": "I resolved the debate by creating a reproducible benchmark comparing the two technologies, presenting data-driven tradeoffs to reach a team consensus."
+      "score": 80,
+      "rationale": "Correctly referenced Alembic. Could expand on schema versioning strategies.",
+      "model_answer": "Use Alembic to define declarative structural migrations versioned in Git alongside database entity definitions.",
+      "improved_phrasing": "For database migrations, I integrate Alembic to generate declarative, version-controlled schema upgrades."
     }
   ]
 }
 ```
-
----
-
-## HTTP Error Codes (Standardized)
-
-| Code | Status | Meaning | Reason |
-| :--- | :--- | :--- | :--- |
-| `400` | Bad Request | Invalid Input | Missing required fields, unsupported file type (non-PDF) |
-| `413` | Payload Too Large | File Too Big | Uploaded resume file exceeds 5MB size limit |
-| `404` | Not Found | Entity Missing | Requesting generation or evaluation for a non-existent `resume_id` or `interview_id` |
-| `500` | Internal Server Error | AI Gateway Failure | LangChain or Vector DB failed to respond correctly |

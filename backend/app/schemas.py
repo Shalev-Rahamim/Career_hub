@@ -41,16 +41,16 @@ class ResumeChatResponse(BaseModel):
 # --- Feature B: Interview Simulator Schemas ---
 
 class GenerateQuestionsRequest(BaseModel):
-    job_description: str = Field(description="The target job description text to tailor questions around")
-    num_questions: int = Field(default=3, description="Number of interview questions to synthesize (3-5)", ge=3, le=5)
+    assignment_text: str = Field(description="The home assignment code, architecture layout, or project documentation")
+    num_questions: int = Field(default=3, description="Number of defense questions to synthesize (3-5)", ge=3, le=5)
 
 class QuestionItem(BaseModel):
     question_id: str = Field(description="Unique question identifier, e.g., q-1")
-    question_text: str = Field(description="The synthesized interview question")
-    category: str = Field(description="Category of the question (e.g., Technical, Behavioral)")
+    question_text: str = Field(description="The synthesized project defense question")
+    category: str = Field(description="Category of the question (e.g., Performance, Security, Architecture)")
 
 class GenerateQuestionsResponse(BaseModel):
-    interview_id: str = Field(description="UUID of the created interview simulation session")
+    interview_id: str = Field(description="UUID of the created project defense simulation session")
     questions: List[QuestionItem] = Field(description="List of tailored questions generated")
 
 
@@ -60,7 +60,7 @@ class AnswerItem(BaseModel):
 
 class EvaluateInterviewRequest(BaseModel):
     interview_id: str = Field(description="UUID of the interview simulation session")
-    job_description: str = Field(description="The target job description context")
+    assignment_text: str = Field(description="The assignment code or architecture text submitted")
     answers: List[AnswerItem] = Field(description="The candidate's answers to the generated questions")
 
 
