@@ -546,8 +546,8 @@ export default function InterviewSimulatorPage() {
                         onChange={(e) => handleAnswerChange(q.question_id, e.target.value)}
                         disabled={isEvaluating}
                         placeholder={language === "hebrew" ? "הקלד כאן את ההתגוננות הטכנית וההסבר שלך..." : "Type your technical defense answer here..."}
-                        className="w-full h-32 px-4 py-3 border border-slate-200 rounded-2xl focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none transition-all text-right font-sans text-sm resize-none"
-                        dir="rtl"
+                        className={`w-full h-32 px-4 py-3 border border-slate-200 rounded-2xl focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none transition-all font-sans text-sm resize-none ${language === "hebrew" ? "text-right" : "text-left"}`}
+                        dir={language === "hebrew" ? "rtl" : "ltr"}
                       />
                     </div>
                   );

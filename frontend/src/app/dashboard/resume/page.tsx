@@ -298,7 +298,8 @@ export default function ResumeOptimizerPage() {
                   }}
                   disabled={isUploading}
                   placeholder="הדביקו כאן את הטקסט של קורות החיים שלכם במלואו..."
-                  className="w-full h-48 px-4 py-3 border border-slate-200 rounded-2xl focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none transition-all text-right resize-none font-mono text-sm"
+                  className={`w-full h-48 px-4 py-3 border border-slate-200 rounded-2xl focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none transition-all resize-none text-sm ${language === "hebrew" ? "text-right font-sans" : "text-left font-mono"}`}
+                  dir={language === "hebrew" ? "rtl" : "ltr"}
                 />
               </div>
 
@@ -521,19 +522,20 @@ export default function ResumeOptimizerPage() {
                       <p className="text-xs mt-1">רשום למשל: ״כיצד ניתן לנסח מחדש את סעיף ניהול הפרויקטים שלי בצורה טובה יותר?״</p>
                     </div>
                   )}
-                  {chatMessages.map((msg, i) => (
+                   {chatMessages.map((msg, i) => (
                     <div
                       key={i}
                       className={`flex ${msg.role === "user" ? "justify-start" : "justify-end"}`}
                     >
                       <div
+                        dir="auto"
                         className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm shadow-sm leading-relaxed ${
                           msg.role === "user"
-                            ? "bg-teal-600 text-white rounded-tr-none"
-                            : "bg-white border border-slate-200 text-slate-800 rounded-tl-none"
+                            ? "bg-teal-600 text-white rounded-tr-none text-right"
+                            : "bg-white border border-slate-200 text-slate-800 rounded-tl-none text-right"
                         }`}
                       >
-                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                        <p className="whitespace-pre-wrap font-sans" dir="auto">{msg.content}</p>
                       </div>
                     </div>
                   ))}
