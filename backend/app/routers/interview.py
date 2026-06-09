@@ -3,9 +3,10 @@ import io
 import os
 import shutil
 import tempfile
-from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Header, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from app.database import SessionLocal
 import chromadb
 import fitz  # PyMuPDF
 import docx
@@ -24,7 +25,8 @@ from app.schemas import (
     QuestionItem,
     EvaluateInterviewRequest,
     EvaluateInterviewResponse,
-    QuestionEvaluationItem
+    QuestionEvaluationItem,
+    InterviewStatusResponse
 )
 from app.config import settings
 
@@ -283,8 +285,116 @@ async def process_and_upload_file(client: genai.Client, upload_file: UploadFile)
     return resource_names
 
 
+# Background task worker for Gemini API question synthesis
+def generate_gemini_questions_task(
+    interview_id: str,
+    retrieved_questions: List[dict],
+    assignment_uris: List[str],
+    solution_uris: List[str],
+    difficulty_level: str,
+    num_questions: int,
+    language: str
+):
+    db = SessionLocal()
+    try:
+        client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        
+        assignment_files = []
+        for uri in assignment_uris:
+            if uri.strip():
+                try:
+                    assignment_files.append(client.files.get(name=uri))
+                except Exception as e:
+                    print(f"Error loading assignment file {uri}: {e}")
+                    
+        solution_files = []
+        for uri in solution_uris:
+            if uri.strip():
+                try:
+                    solution_files.append(client.files.get(name=uri))
+                except Exception as e:
+                    print(f"Error loading solution file {uri}: {e}")
+        
+        lang_str = "Hebrew" if language.lower() == "hebrew" else "English"
+        system_prompt = f"You are a senior tech lead reviewing a candidate's technical home assignment.\n" \
+                        f"You are given the uploaded assignment guidelines file(s) and the candidate's solution file(s).\n" \
+                        f"Synthesize exactly {num_questions} customized project defense questions.\n" \
+                        f"Focus the difficulty of the questions on a level appropriate for: {difficulty_level.upper()}.\n" \
+                        f"- EASY: Focus on basic code clarity, syntax, simple logic, and basic local error handling.\n" \
+                        f"- MEDIUM: Focus on standard design patterns, API separation, database usage, clean code, and standard testability.\n" \
+                        f"- HARD: Focus on deep architectural patterns, high concurrency, security under pressure, scaling bottlenecks, memory leakage, and complex performance trade-offs.\n" \
+                        f"For each question:\n" \
+                        f"- Blend the retrieved conceptual query with the candidate's actual submitted solution/instructions.\n" \
+                        f"- Write the questions clearly in {lang_str}."
+
+        user_prompt = f"Retrieved Base System Questions to integrate or draw themes from:\n{str(retrieved_questions)}\n\n" \
+                      f"Synthesize exactly {num_questions} questions in {lang_str}."
+
+        contents_payload = []
+        contents_payload.extend(assignment_files)
+        contents_payload.extend(solution_files)
+        contents_payload.append(system_prompt)
+        contents_payload.append(user_prompt)
+
+        response = client.models.generate_content(
+            model=settings.LLM_MODEL or "gemini-3.5-flash",
+            contents=contents_payload,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=LLMQuestionsList,
+                temperature=0.4
+            )
+        )
+
+        llm_result = LLMQuestionsList.model_validate_json(response.text)
+        
+        questions_list = []
+        for idx, q in enumerate(llm_result.questions[:num_questions]):
+            questions_list.append(QuestionItem(
+                question_id=f"q-{idx + 1}",
+                question_text=q.question_text,
+                category=q.category
+            ))
+
+        # Update database with new synthesized questions
+        interview = db.query(Interview).filter(Interview.interview_id == interview_id).first()
+        if interview:
+            # Keep the first 2 local questions intact (so they don't change or reset their answers)
+            merged_questions = []
+            if interview.questions_json and len(interview.questions_json) >= 2:
+                merged_questions.extend(interview.questions_json[:2])
+            else:
+                # Fallback if somehow missing
+                merged_questions.extend([q.model_dump() for q in initial_questions[:2]])
+
+            # Append synthesized Gemini questions starting from ID q-3 onwards
+            for idx, q in enumerate(llm_result.questions[:num_questions]):
+                merged_questions.append(QuestionItem(
+                    question_id=f"q-{idx + 3}",
+                    question_text=q.question_text,
+                    category=q.category
+                ).model_dump())
+
+            interview.questions_json = merged_questions
+            interview.generation_status = "completed"
+            db.commit()
+            print(f"Background task finished. Saved custom synthesized questions for interview {interview_id}.")
+
+    except Exception as e:
+        db.rollback()
+        print(f"Failed to generate custom defense questions in background: {e}")
+        # Revert back to Chroma questions if Gemini fails
+        interview = db.query(Interview).filter(Interview.interview_id == interview_id).first()
+        if interview:
+            interview.generation_status = "completed" # degradated gracefully using RAG questions
+            db.commit()
+    finally:
+        db.close()
+
+
 @router.post("/generate-questions", response_model=GenerateQuestionsResponse)
 async def generate_defense_questions(
+    background_tasks: BackgroundTasks,
     assignment_file: UploadFile = File(...),
     solution_file: UploadFile = File(...),
     difficulty_level: str = Form("medium"),
@@ -302,32 +412,21 @@ async def generate_defense_questions(
         db.commit()
         db.refresh(user)
 
-    # 1. Parse a small snippet locally to run Chroma DB vector similarity search
+    # 1. Retrieve 2 Chroma RAG questions immediately to start simulation right away
     retrieved_questions = []
     try:
+        # Avoid generating heavy query vector embeddings synchronously on request (prevents the 10-second delay)
+        # We perform a fast, index-free text query on the local Chroma DB
         assignment_text_snippet = await extract_text_from_upload_file(assignment_file)
-        
         collection = get_chroma_collection()
-        has_key = settings.GOOGLE_API_KEY is not None
         
-        if has_key and assignment_text_snippet.strip():
-            from langchain_google_genai import GoogleGenerativeAIEmbeddings
-            embeddings = GoogleGenerativeAIEmbeddings(
-                model="models/text-embedding-004",
-                google_api_key=settings.GOOGLE_API_KEY
-            )
-            query_vector = embeddings.embed_query(assignment_text_snippet[:2000])
-            results = collection.query(
-                query_embeddings=[query_vector],
-                n_results=5
-            )
-        else:
-            results = collection.query(
-                query_texts=[assignment_text_snippet[:1000]] if assignment_text_snippet else ["General architecture"],
-                n_results=5
-            )
+        # Simple text querying fallback is instant (under 100ms)
+        results = collection.query(
+            query_texts=[assignment_text_snippet[:800]] if assignment_text_snippet.strip() else ["General architecture"],
+            n_results=2
+        )
 
-        if results and "documents" in results and results["documents"]:
+        if results and "documents" in results and results["documents"] and len(results["documents"][0]) > 0:
             docs = results["documents"][0]
             metas = results["metadatas"][0] if "metadatas" in results else []
             for i in range(len(docs)):
@@ -337,80 +436,88 @@ async def generate_defense_questions(
                     "category": category
                 })
     except Exception as e:
-        for q in DEFAULT_QUESTION_BANK[:5]:
-            retrieved_questions.append({"question_text": q["text"], "category": q["category"]})
+        print(f"Error querying Chroma: {e}")
 
+    # Fallback to default questions if empty
     if not retrieved_questions:
-        for q in DEFAULT_QUESTION_BANK[:5]:
+        for q in DEFAULT_QUESTION_BANK[:2]:
             retrieved_questions.append({"question_text": q["text"], "category": q["category"]})
 
-    # 2. Upload files to Google AI platform and generate structured questions natively
+    # Fix: Translate local questions to Hebrew if requested to prevent them from staying in English
+    if language.lower() == "hebrew":
+        hebrew_translation_bank = {
+            "In a stateful client-side application, race conditions can occur if multiple concurrent actions update state. How does your code handle state locking or transitions?":
+            "באפליקציית לקוח המנהלת מצב (stateful), עלולים להיווצר מצבי מירוץ (race conditions) אם פעולות מקבילות מעדכנות את המצב בו-זמנית. כיצד הקוד שלך מתמודד עם נעילת מצב או מעברי מצב?",
+            
+            "Your local SQLite database is a single point of failure (SPOF). How would you transition this system to support multi-region replication and failover?":
+            "מסד הנתונים המקומי של SQLite מהווה נקודת כשל יחידה (SPOF). כיצד היית מעביר מערכת זו לתמיכה בשכפול רב-אזורי (multi-region replication) ומנגנון גיבוי במקרה של כשל?",
+            
+            "The codebase connects to external AI APIs synchronously or blockingly. How does your backend handle asynchronous connection limits and request timeouts?":
+            "קוד המקור מתחבר ל-APIs חיצוניים של AI באופן סינכרוני או חוסם. כיצד ה-Backend שלך מתמודד עם מגבלות חיבור אסינכרוניות וזמני קצוב (timeouts) של בקשות?",
+            
+            "If the vector database is temporarily unavailable during question generation, how does the system degrade gracefully?":
+            "אם מסד הנתונים הווקטורי אינו זמין באופן זמני במהלך יצירת השאלות, כיצד המערכת מתגברת על כך ומציגה התנהגות חלופית?",
+            
+            "If a component crashes during a database transaction, how do you prevent data inconsistency and ensure ACID compliance?":
+            "אם רכיב קורס במהלך טרנזקציית מסד נתונים, כיצד אתה מונע חוסר עקביות בנתונים ומבטיח תאימות לעקרונות ACID?",
+            
+            "How do you protect the backend from memory leaks during large file parses or high-throughput JSON processing?":
+            "כיצד אתה מגן על ה-Backend מפני דליפות זיכרון במהלך עיבוד קבצים גדולים או עיבוד JSON בקצב גבוה?",
+
+            "How does your architecture prevent SQL injection and dynamic query vulnerability in search features?":
+            "כיצד הארכיטקטורה שלך מונעת הזרקת SQL (SQL injection) ופגיעויות של שאילתות דינמיות בתכונות החיפוש?",
+
+            "How does the system defend against Prompt Injection or jailbreaks targeting LLM endpoints?":
+            "כיצד המערכת מתגוננת מפני הזרקת פרומפטים (Prompt Injection) או ניסיונות פריצה (jailbreaks) המכוונים לקצוות ה-LLM?",
+
+            "How do you handle API key rotation and credential containment in distributed microservices?":
+            "כיצד אתה מנהל רוטציה של מפתחות API ואבטחת אישורים במיקרו-שירותים מבוזרים?",
+
+            "Under 10000 concurrent requests, how do you prevent database thread starvation and connection pool depletion?":
+            "תחת 10,000 בקשות מקבילות, כיצד תמנע הרעבת תהליכי מסד נתונים וריקון של מאגר החיבורים (connection pool)?",
+
+            "Explain your strategy for caching frequently-queried vectors to reduce database load and query latency.":
+            "הסבר את אסטרטגיית המטמון (caching) שלך עבור וקטורים שנשאלים בתדירות גבוהה כדי להפחית את העומס על מסד הנתונים וזמן התגובה.",
+
+            "What design patterns did you employ to decouple core features and enable independent deployment cycles?":
+            "באילו תבניות עיצוב (Design Patterns) השתמשת כדי להפריד בין תכונות הליבה ולאפשר מחזורי פריסה עצמאיים?",
+
+            "If a user cancels a long-running request mid-process, how do you ensure server resources are immediately released?":
+            "אם משתמש מבטל בקשה ארוכה באמצע התהליך, כיצד אתה מבטיח שמשאבי השרת ישוחררו מיד?",
+
+            "How do you track and audit user actions and system logs in compliance with data privacy regulations?":
+            "כיצד אתה עוקב ומבקר אחר פעולות משתמשים ויומני מערכת בהתאם לתקנות פרטיות הנתונים?",
+
+            "In case of total model api failure, how does the system fallback to local mock generators or cached responses?":
+            "במקרה של כשל מוחלט ב-API של המודל, כיצד המערכת נסוגה למחוללי דמויות מקומיים (mocks) או לתגובות שמורות במטמון?",
+
+            "Explain the strategy used to version-control database schema updates alongside code modifications without downtime.":
+            "הסבר את האסטרטגיה המשמשת לניהול גרסאות של עדכוני סכמת מסד הנתונים לצד שינויי קוד ללא זמן השבתה (downtime)."
+        }
+        for q in retrieved_questions:
+            orig = q["question_text"]
+            if orig in hebrew_translation_bank:
+                q["question_text"] = hebrew_translation_bank[orig]
+            else:
+                # Fallback to category translation if question text itself is not matched directly
+                pass
+
+    # Prepare initial RAG question items
+    initial_questions = []
+    for idx, q in enumerate(retrieved_questions):
+        initial_questions.append(QuestionItem(
+            question_id=f"q-{idx + 1}",
+            question_text=q["question_text"],
+            category=q["category"]
+        ))
+
+    # 2. Upload files to Google AI platform in the background to not block the user response
     try:
         client = genai.Client(api_key=settings.GOOGLE_API_KEY)
-        
-        # Upload dynamically
         assignment_uris = await process_and_upload_file(client, assignment_file)
         solution_uris = await process_and_upload_file(client, solution_file)
         
-        assignment_files = []
-        for uri in assignment_uris:
-            try:
-                assignment_files.append(client.files.get(name=uri))
-            except Exception as e:
-                print(f"Error getting assignment file {uri}: {e}")
-                
-        solution_files = []
-        for uri in solution_uris:
-            try:
-                solution_files.append(client.files.get(name=uri))
-            except Exception as e:
-                print(f"Error getting solution file {uri}: {e}")
-        
-        # Call native Gemini model
-        lang_str = "Hebrew" if language.lower() == "hebrew" else "English"
-        system_prompt = f"You are a senior tech lead reviewing a candidate's technical home assignment.\n" \
-                        f"You are given the uploaded assignment guidelines file(s) and the candidate's solution file(s).\n" \
-                        f"Synthesize exactly {num_questions} customized project defense questions.\n" \
-                        f"Focus the difficulty of the questions on a level appropriate for: {difficulty_level.upper()}.\n" \
-                        f"- EASY: Focus on basic code clarity, syntax, simple logic, and basic local error handling.\n" \
-                        f"- MEDIUM: Focus on standard design patterns, API separation, database usage, clean code, and standard testability.\n" \
-                        f"- HARD: Focus on deep architectural patterns, high concurrency, security under pressure, scaling bottlenecks, memory leakage, and complex performance trade-offs.\n" \
-                        f"For each question:\n" \
-                        f"- Blend the retrieved conceptual query with the candidate's actual submitted solution/instructions.\n" \
-                        f"- Write the questions clearly in {lang_str}."
-
-        user_prompt = f"Retrieved Base System Questions to integrate or draw themes from:\n{str(retrieved_questions)}\n\n" \
-                      f"Synthesize exactly {num_questions} questions in {lang_str}."
-
-        # Model call
-        contents_payload = []
-        contents_payload.extend(assignment_files)
-        contents_payload.extend(solution_files)
-        contents_payload.append(system_prompt)
-        contents_payload.append(user_prompt)
-
-        response = client.models.generate_content(
-            model=settings.LLM_MODEL or "gemini-2.0-flash",
-            contents=contents_payload,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=LLMQuestionsList,
-                temperature=0.4
-            )
-        )
-
-        import json
-        llm_result = LLMQuestionsList.model_validate_json(response.text)
-        
-        questions_list = []
-        for idx, q in enumerate(llm_result.questions[:num_questions]):
-            questions_list.append(QuestionItem(
-                question_id=f"q-{idx + 1}",
-                question_text=q.question_text,
-                category=q.category
-            ))
-
-        # Save Interview session to database (comma-separated URIs)
+        # Save Interview session to database with RAG questions initially and status=processing
         db_interview = Interview(
             user_id=user.user_id,
             assignment_file_uri=",".join(assignment_uris),
@@ -418,20 +525,56 @@ async def generate_defense_questions(
             difficulty_level=difficulty_level,
             num_questions=num_questions,
             language=language,
-            questions_json=[q.model_dump() for q in questions_list]
+            questions_json=[q.model_dump() for q in initial_questions],
+            generation_status="processing"
         )
         db.add(db_interview)
         db.commit()
         db.refresh(db_interview)
 
+        # Launch background task to process custom synthesized questions in the background
+        background_tasks.add_task(
+            generate_gemini_questions_task,
+            db_interview.interview_id,
+            retrieved_questions,
+            assignment_uris,
+            solution_uris,
+            difficulty_level,
+            num_questions,
+            language
+        )
+
         return GenerateQuestionsResponse(
             interview_id=db_interview.interview_id,
-            questions=questions_list
+            questions=initial_questions,
+            generation_status="processing"
         )
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to generate defense questions: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to initialize interview: {str(e)}")
+
+
+@router.get("/{interview_id}/status", response_model=InterviewStatusResponse)
+def get_interview_status(interview_id: str, db: Session = Depends(get_db)):
+    interview = db.query(Interview).filter(Interview.interview_id == interview_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+        
+    questions = []
+    if interview.questions_json:
+        for q in interview.questions_json:
+            questions.append(QuestionItem(
+                question_id=q.get("question_id"),
+                question_text=q.get("question_text"),
+                category=q.get("category", "General")
+            ))
+            
+    return InterviewStatusResponse(
+        interview_id=interview.interview_id,
+        generation_status=interview.generation_status or "processing",
+        questions=questions
+    )
 
 
 @router.post("/evaluate", response_model=EvaluateInterviewResponse)

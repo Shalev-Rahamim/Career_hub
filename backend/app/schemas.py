@@ -54,6 +54,12 @@ class QuestionItem(BaseModel):
 class GenerateQuestionsResponse(BaseModel):
     interview_id: str = Field(description="UUID of the created project defense simulation session")
     questions: List[QuestionItem] = Field(description="List of tailored questions generated")
+    generation_status: str = Field(description="Status of background Gemini question generation: processing or completed")
+
+class InterviewStatusResponse(BaseModel):
+    interview_id: str
+    generation_status: str
+    questions: List[QuestionItem]
 
 
 class AnswerItem(BaseModel):

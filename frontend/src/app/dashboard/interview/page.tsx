@@ -77,6 +77,39 @@ export default function InterviewSimulatorPage() {
     }
   };
 
+  // Polling and Page-by-page tracking
+  const [backgroundLoading, setBackgroundLoading] = useState(false);
+  const [activePage, setActivePage] = useState<1 | 2>(1); // 1: Chroma questions (1-2), 2: Custom synthesized questions (3+)
+
+  const startPollingStatus = (intId: string) => {
+    setBackgroundLoading(true);
+    const interval = setInterval(async () => {
+      try {
+        const response = await fetch(`http://localhost:8000/api/interview/${intId}/status`);
+        if (!response.ok) return;
+        const data = await response.json();
+        
+        if (data.generation_status === "completed") {
+          clearInterval(interval);
+          setBackgroundLoading(false);
+          setQuestions(data.questions);
+          // Set any missing questions inside answers state
+          setAnswers((prev) => {
+            const next = { ...prev };
+            data.questions.forEach((q: Question) => {
+              if (next[q.question_id] === undefined) {
+                next[q.question_id] = "";
+              }
+            });
+            return next;
+          });
+        }
+      } catch (e) {
+        console.error("Error polling interview status:", e);
+      }
+    }, 3000);
+  };
+
   const handleStartDefense = async () => {
     if (!assignmentFile) {
       setError("אנא העלה את קובץ הנחיות המטלה");
@@ -99,9 +132,8 @@ export default function InterviewSimulatorPage() {
     formData.append("language", language);
 
     try {
-      // Simulate stepped loaders for a premium visual feel
-      setTimeout(() => setGenerationStep(2), 2200); // Searching Chroma
-      setTimeout(() => setGenerationStep(3), 4500); // AI Synthesis
+      // Stepped loader simulations
+      setTimeout(() => setGenerationStep(2), 700); // Searching Chroma
 
       const response = await fetch("http://localhost:8000/api/interview/generate-questions", {
         method: "POST",
@@ -128,6 +160,11 @@ export default function InterviewSimulatorPage() {
       setAnswers(initAnswers);
 
       setStep(2);
+      
+      // If status is processing, start polling background updates
+      if (data.generation_status === "processing") {
+        startPollingStatus(data.interview_id);
+      }
     } catch (err: any) {
       setError(err.message || "שגיאה בחיבור לשרת ה-Backend. ודא שהשרת פועל כראוי.");
     } finally {
@@ -183,6 +220,7 @@ export default function InterviewSimulatorPage() {
 
   const handleRestart = () => {
     setStep(1);
+    setActivePage(1);
     setAssignmentFile(null);
     setSolutionFile(null);
     setQuestions([]);
@@ -468,7 +506,7 @@ export default function InterviewSimulatorPage() {
         {/* STEP 2: Defense Simulator (Questions) */}
         {step === 2 && (
           <div className="bg-white border border-slate-200/80 rounded-3xl p-8 shadow-xl shadow-slate-100/55 max-w-4xl mx-auto w-full space-y-8">
-            <div className="border-b border-slate-100 pb-4 flex justify-between items-center">
+            <div className="border-b border-slate-100 pb-4 flex justify-between items-center text-right">
               <div>
                 <h3 className="text-xl font-bold text-slate-800">סימולציית ההגנה התחילה</h3>
                 <p className="text-slate-400 text-xs mt-1">ענו על שאלות ההגנה בצורה ממוקדת. הציפיות מותאמות לרמת קושי: {difficultyLevel === "easy" ? "קל" : difficultyLevel === "medium" ? "בינוני" : "קשה"}.</p>
@@ -481,31 +519,43 @@ export default function InterviewSimulatorPage() {
             </div>
 
             <div className="space-y-6">
-              {questions.map((q, idx) => (
-                <div key={q.question_id} className="space-y-2 border-b border-slate-50 pb-6">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-full">
-                      {q.category}
-                    </span>
-                    <span className="text-xs text-slate-400 font-bold">שאלה {idx + 1} מתוך {questions.length}</span>
-                  </div>
-                  <h4 className="font-bold text-slate-800 text-base leading-relaxed text-left font-mono" dir="ltr">
-                    {q.question_text}
-                  </h4>
-                  <textarea
-                    value={answers[q.question_id] || ""}
-                    onChange={(e) => handleAnswerChange(q.question_id, e.target.value)}
-                    disabled={isEvaluating}
-                    placeholder="הקלד כאן את ההתגוננות הטכנית וההסבר שלך לקוד באנגלית..."
-                    className="w-full h-32 px-4 py-3 border border-slate-200 rounded-2xl focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none transition-all text-left font-mono text-sm resize-none"
-                    dir="ltr"
-                  />
-                </div>
-              ))}
+              {questions
+                .filter((q) => {
+                  if (activePage === 1) {
+                    return q.question_id === "q-1" || q.question_id === "q-2";
+                  } else {
+                    return q.question_id !== "q-1" && q.question_id !== "q-2";
+                  }
+                })
+                .map((q, idx) => {
+                  const actualIndex = questions.findIndex((x) => x.question_id === q.question_id);
+                  return (
+                    <div key={q.question_id} className="space-y-2 border-b border-slate-50 pb-6 animate-fade-in text-right">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-full">
+                          {q.category}
+                        </span>
+                        <span className="text-xs text-slate-400 font-bold">שאלה {actualIndex + 1} מתוך {questions.length}</span>
+                      </div>
+                      {/* RTL aligned question text for Hebrew compatibility */}
+                      <h4 className="font-bold text-slate-800 text-base leading-relaxed text-right font-sans">
+                        {q.question_text}
+                      </h4>
+                      <textarea
+                        value={answers[q.question_id] || ""}
+                        onChange={(e) => handleAnswerChange(q.question_id, e.target.value)}
+                        disabled={isEvaluating}
+                        placeholder={language === "hebrew" ? "הקלד כאן את ההתגוננות הטכנית וההסבר שלך..." : "Type your technical defense answer here..."}
+                        className="w-full h-32 px-4 py-3 border border-slate-200 rounded-2xl focus:border-teal-500 focus:ring-2 focus:ring-teal-100 outline-none transition-all text-right font-sans text-sm resize-none"
+                        dir="rtl"
+                      />
+                    </div>
+                  );
+                })}
             </div>
 
             {error && (
-              <div className="bg-red-50 border border-red-150 rounded-2xl p-4 flex items-start gap-3 text-red-700 text-sm">
+              <div className="bg-red-50 border border-red-150 rounded-2xl p-4 flex items-start gap-3 text-red-700 text-sm text-right">
                 <svg className="w-5 h-5 flex-shrink-0 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
@@ -514,21 +564,67 @@ export default function InterviewSimulatorPage() {
             )}
 
             {isEvaluating ? (
-              <div className="bg-teal-50/50 border border-teal-100 rounded-2xl p-6 flex flex-col items-center justify-center gap-3">
+              <div className="bg-teal-50/50 border border-teal-100 rounded-2xl p-6 flex flex-col items-center justify-center gap-3 text-center">
                 <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-teal-600"></div>
                 <p className="text-teal-800 font-bold text-sm">מעריך ומנתח את התשובות הטכניות מול מודלים אידיאליים לרמת {difficultyLevel === "easy" ? "קל" : difficultyLevel === "medium" ? "בינוני" : "קשה"}...</p>
               </div>
             ) : (
               <div className="flex gap-4">
-                <button
-                  onClick={handleSubmitDefense}
-                  className="flex-1 py-4 bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-bold rounded-2xl shadow-lg shadow-teal-100 hover:shadow-xl hover:translate-y-[-1px] transition-all cursor-pointer text-center text-base"
-                >
-                  שלח תשובות להערכה
-                </button>
+                {activePage === 1 ? (
+                  /* Page 1: Advance Button */
+                  backgroundLoading ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="flex-1 py-4 bg-slate-100 text-slate-400 font-bold rounded-2xl border border-slate-200 transition-all flex items-center justify-center gap-3"
+                    >
+                      <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-slate-400"></div>
+                      <span>יוצר שאלות על בסיס המטלה שלך...</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Verify page 1 questions are answered
+                        const q1Ans = answers["q-1"]?.trim();
+                        const q2Ans = answers["q-2"]?.trim();
+                        if (!q1Ans || !q2Ans) {
+                          setError("אנא ענה על שתי השאלות הראשונות לפני שתתקדם");
+                          return;
+                        }
+                        setError(null);
+                        setActivePage(2);
+                      }}
+                      className="flex-1 py-4 bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-bold rounded-2xl shadow-lg shadow-teal-100 hover:shadow-xl hover:translate-y-[-1px] transition-all cursor-pointer text-center text-base"
+                    >
+                      התקדם לשאלות המטלה
+                    </button>
+                  )
+                ) : (
+                  /* Page 2: Evaluate Answers button */
+                  <>
+                    <button
+                      onClick={handleSubmitDefense}
+                      className="flex-1 py-4 bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-bold rounded-2xl shadow-lg shadow-teal-100 hover:shadow-xl hover:translate-y-[-1px] transition-all cursor-pointer text-center text-base"
+                    >
+                      שלח תשובות להערכה
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError(null);
+                        setActivePage(1);
+                      }}
+                      className="px-6 py-4 bg-white border border-slate-200 hover:border-slate-350 text-slate-650 font-bold rounded-2xl transition-all cursor-pointer"
+                    >
+                      חזור
+                    </button>
+                  </>
+                )}
+                
                 <button
                   onClick={handleRestart}
-                  className="px-6 py-4 bg-white border border-slate-200 hover:border-slate-350 text-slate-600 font-bold rounded-2xl transition-all cursor-pointer"
+                  className="px-6 py-4 bg-white border border-slate-200 hover:border-red-200 text-slate-500 hover:text-red-650 font-bold rounded-2xl transition-all cursor-pointer"
                 >
                   התחל מחדש
                 </button>

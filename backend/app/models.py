@@ -62,6 +62,10 @@ class Interview(Base):
     
     # JSON list of generated questions: [{"question_id": str, "question_text": str, "category": str}]
     questions_json = Column(JSON, nullable=True)
+    
+    # Asynchronous/Status Tracking
+    generation_status = Column(String(50), nullable=True, default="processing") # "processing" or "completed" or "failed"
+    
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
     # Relationships
