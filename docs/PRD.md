@@ -2,33 +2,33 @@
 
 ## 1. Project Overview
 
-*   **Project Name:** AI-Driven Career Readiness Hub (Project Defense Edition)
-*   **Core Value Proposition:** An automated, high-efficiency platform designed to accelerate candidate job readiness through decoupled AI services: a structural resume enhancer/generator and a project-specific Home Assignment Defense Simulator.
-*   **Target Audience:** Job seekers, college graduates, and professionals preparing for technical interviews, technical reviews, and home assignment defense presentations.
+*   **Project Name:** Career Readiness Hub
+*   **Core Value Proposition:** A career preparation platform designed to help junior developers and job seekers get ready for technical recruitment processes. The platform solves two main challenges: tailoring resumes to meet tech industry expectations, and simulating realistic technical defense interviews for home assignments.
+*   **Target Audience:** Job seekers, computer science graduates, and developers preparing for technical interviews, design reviews, or home assignment presentations.
 
 ---
 
-## 2. Product Architecture & Decoupling Strategy
+## 2. Product Architecture & Service Structure
 
-To ensure independent development cycles and rapid deployment within 48 hours, the system architecture isolates the two primary features into autonomous modules.
+To allow independent development, fast iterations, and stable releases, the application is divided into two separate, decoupled features:
 
 ```
-                          ┌────────────────────────┐
-                          │   Next.js Frontend     │
-                          └───────────┬────────────┘
-                                      │
-                      ┌───────────────┴───────────────┐
-                      ▼                               ▼
-           /api/resume/* Endpoints        /api/interview/* Endpoints
-                      │                               │
-            ┌─────────▼─────────┐           ┌─────────▼─────────┐
-            │   Resume Service  │           │ Defense Service   │
-            └─────────┬─────────┘           └─────────┬─────────┘
-                      │                               │
-            ┌─────────▼─────────┐           ┌─────────▼─────────┐
-            │ LangChain Prompt  │           │ Vector Store RAG  │
-            │ (Structured JSON) │           │ (Architecture DB) │
-            └───────────────────┘           └───────────────────┘
+                           ┌────────────────────────┐
+                           │    Next.js Frontend    │
+                           └───────────┬────────────┘
+                                       │
+                       ┌───────────────┴───────────────┐
+                       ▼                               ▼
+            /api/resume/* Endpoints        /api/interview/* Endpoints
+                       │                               │
+             ┌─────────▼─────────┐           ┌─────────▼─────────┐
+             │   Resume Service  │           │ Defense Service   │
+             └─────────┬─────────┘           └─────────┬─────────┘
+                       │                               │
+             ┌─────────▼─────────┐           ┌─────────▼─────────┐
+             │ LangChain Prompt  │           │ Vector Store RAG  │
+             │ (Structured JSON) │           │ (Architecture DB) │
+             └───────────────────┘           └───────────────────┘
 ```
 
 ---
@@ -37,26 +37,32 @@ To ensure independent development cycles and rapid deployment within 48 hours, t
 
 ### Feature A: AI Resume Builder & Optimizer
 
-*   **User Flow:** User uploads/pastes resume → FastAPI processes and analyzes using LLM (Gemini 3.5 Flash) → Next.js renders:
-    *   Left Panel (Top): Actual PDF in iframe viewport with custom zoom parameters.
-    *   Right Panel (Top): Circular score badge and points to keep vs. improve.
-    *   Left Panel (Bottom): Optimized text (RTL/LTR dynamic text alignment).
-    *   Right Panel (Bottom): Inline contextual revision chat window.
+*   **Goal:** Help candidates identify weak points in their resumes and rewrite them using professional software terminology and concrete impact metrics.
+*   **User Flow:**
+    1. The user uploads their resume as a PDF file or pastes it as raw text.
+    2. The backend extracts the text, reviews it, and returns structured feedback.
+    3. The Next.js frontend displays the original document on one side, and the optimization dashboard on the other.
+    4. The dashboard shows a completeness score, a list of strengths to keep, and specific sections to improve (showing original text, suggested change, and the explanation).
+    5. The user can open an interactive chat to discuss revisions or ask for alternative phrasings.
+
 *   **Technical Integration:**
-    *   FastAPI Endpoints: `POST /api/resume/analyze` and `POST /api/resume/chat`.
-    *   AI Layer: LangChain structured Pydantic schema validation.
+    *   API Endpoints: `POST /api/resume/analyze` (extraction and evaluation) and `POST /api/resume/chat` (contextual revision chat).
+    *   AI Implementation: LangChain parser with Pydantic schemas to ensure clean JSON responses.
 
 ### Feature B: AI Technical Home Assignment Defense Simulator
 
-*   **User Flow:** User uploads or pastes their completed project code, architecture layout, or project documentation → FastAPI queries Chroma DB for conceptual technical questions (architecture, optimization, performance scaling, security, design patterns) -> Gemini 3.5 Flash synthesizes 3-5 tailored project defense questions -> Next.js displays simulation wizard -> User submits answers -> FastAPI grades answers using structured output -> Next.js displays score dashboard with model answer comparisons.
-*   **Functional Requirements:**
-*   Home Assignment Input: Support direct code text pasting or project docs.
-*   Project Defense Wizard: Multi-step layout presenting synthesized questions with distinct answer blocks.
-*   Evaluation Matrix: Dynamic grading providing score per question, technical rationale, perfect model answers, and phrasing corrections.
+*   **Goal:** Prepare candidates for the "home assignment defense" stage of interviews, where they must explain their code, architectural decisions, security choices, and system scaling.
+*   **User Flow:**
+    1. The user uploads the home assignment instructions (guidelines) along with their completed project code or architecture documentation.
+    2. The backend queries a vector database (Chroma DB) containing standard senior-level system design and coding questions.
+    3. The system blends these base questions with the candidate's actual files to generate 3 to 5 custom interview questions.
+    4. The candidate goes through a wizard-style interface to answer each question.
+    5. Upon submission, the system evaluates the answers, grades them, and presents a comparison dashboard showing the candidate's answer, a senior-level model answer, and a suggested phrasing rewrite.
+
 *   **Technical Integration:**
-    *   FastAPI Endpoints: `POST /api/interview/generate-questions` and `POST /api/interview/evaluate`.
-    *   Vector Store: Chroma DB running locally/in-memory with `GoogleGenerativeAIEmbeddings` (text-embedding-004) loaded with 15+ standard senior design and technical evaluation questions.
-    *   AI Layer: Google GenAI SDK with Pydantic structured output mapping.
+    *   API Endpoints: `POST /api/interview/generate-questions` and `POST /api/interview/evaluate`.
+    *   Vector Storage: A local Chroma DB seeded with 16 fundamental architectural and design pattern questions.
+    *   AI Implementation: Google GenAI SDK using Gemini 3.5 Flash for multimodal file reading and structured evaluation.
 
 ---
 
@@ -64,7 +70,7 @@ To ensure independent development cycles and rapid deployment within 48 hours, t
 
 ### System Stack
 
-*   **Frontend:** Next.js, React, Tailwind CSS (Hebrew RTL Responsive Layout)
+*   **Frontend:** Next.js, React, Tailwind CSS (Hebrew RTL responsive layout)
 *   **Backend:** FastAPI (Python), Uvicorn, SQLite (Relational database)
 *   **AI Layer:** LangChain (LCEL) & Google GenAI SDK (Gemini 3.5 Flash)
 *   **Vector Database:** Chroma DB (locally indexed bank of architectural/design pattern evaluation questions)
