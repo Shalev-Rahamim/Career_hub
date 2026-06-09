@@ -679,7 +679,7 @@ export default function InterviewSimulatorPage() {
                       רמת {difficultyLevel === "easy" ? "קל" : difficultyLevel === "medium" ? "בינוני" : "קשה"}
                     </span>
                   </div>
-                  <p className="text-slate-500 text-sm leading-relaxed max-w-xl">
+                  <p className={`text-slate-500 text-sm leading-relaxed max-w-xl ${language === "hebrew" ? "text-right font-sans" : "text-left font-mono"}`} dir={language === "hebrew" ? "rtl" : "ltr"}>
                     {evaluation.general_feedback}
                   </p>
                 </div>
@@ -714,42 +714,42 @@ export default function InterviewSimulatorPage() {
                     </div>
 
                     {/* Question Text */}
-                    <div className="space-y-1">
+                    <div className="space-y-1 text-right">
                       <span className="text-xs font-bold text-slate-400 block">שאלה שנשאלה:</span>
-                      <p className="font-bold text-slate-800 text-sm leading-relaxed text-left font-mono" dir="ltr">
+                      <p className={`font-bold text-slate-800 text-sm leading-relaxed ${language === "hebrew" ? "text-right font-sans" : "text-left font-mono"}`} dir={language === "hebrew" ? "rtl" : "ltr"}>
                         {questionText}
                       </p>
                     </div>
 
                     {/* Rationale feedback */}
-                    <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 text-xs leading-relaxed text-slate-600">
+                    <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 text-xs leading-relaxed text-slate-600 text-right" dir={language === "hebrew" ? "rtl" : "ltr"}>
                       <span className="font-bold text-teal-800 block mb-1">משוב הבוחן:</span>
-                      <p>{item.rationale}</p>
+                      <p className="font-sans leading-relaxed">{item.rationale}</p>
                     </div>
  
                     {/* Phrasing comparison grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-50 pt-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-50 pt-4 text-right">
                       {/* Candidate Answer */}
-                      <div className="bg-slate-50/50 rounded-xl p-4 space-y-1">
+                      <div className="bg-slate-50/50 rounded-xl p-4 space-y-1" dir={language === "hebrew" ? "rtl" : "ltr"}>
                         <span className="text-xs font-bold text-slate-400 block">התשובה שכתבת:</span>
-                        <p className="text-xs text-slate-700 text-left font-mono" dir="ltr">
+                        <p className={`text-xs text-slate-700 font-sans leading-relaxed ${language === "hebrew" ? "text-right" : "text-left"}`} dir="auto">
                           {answers[item.question_id] || "לא ניתנה תשובה."}
                         </p>
                       </div>
  
                       {/* Phrasing correction */}
-                      <div className="bg-teal-50/20 border border-teal-50/80 rounded-xl p-4 space-y-1">
+                      <div className="bg-teal-50/20 border border-teal-50/80 rounded-xl p-4 space-y-1" dir={language === "hebrew" ? "rtl" : "ltr"}>
                         <span className="text-xs font-bold text-teal-700 block">שדרוג התשובה שלך:</span>
-                        <p className="text-xs text-slate-800 font-bold text-left font-mono leading-relaxed" dir="ltr">
+                        <p className={`text-xs text-slate-800 font-bold leading-relaxed ${language === "hebrew" ? "text-right font-sans" : "text-left font-mono"}`} dir={language === "hebrew" ? "rtl" : "ltr"}>
                           {item.improved_phrasing}
                         </p>
                       </div>
                     </div>
  
                     {/* Ideal Model Answer */}
-                    <div className="bg-emerald-50/10 border-t border-emerald-50/50 pt-3">
+                    <div className="bg-emerald-50/10 border-t border-emerald-50/50 pt-3" dir={language === "hebrew" ? "rtl" : "ltr"}>
                       <span className="text-xs font-bold text-emerald-800 block">הפתרון הטכני המלא:</span>
-                      <p className="text-xs text-slate-500 text-left font-mono leading-relaxed mt-1" dir="ltr">
+                      <p className={`text-xs text-slate-500 leading-relaxed mt-1 ${language === "hebrew" ? "text-right font-sans" : "text-left font-mono"}`} dir={language === "hebrew" ? "rtl" : "ltr"}>
                         {item.model_answer}
                       </p>
                     </div>
