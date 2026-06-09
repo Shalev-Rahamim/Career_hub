@@ -1,33 +1,33 @@
 # AI-Driven Career Readiness Hub
 
-An automated, high-efficiency platform designed to accelerate candidate job readiness through decoupled AI services: a structural resume enhancer/generator and a contextual job-description-to-interview-simulator.
+An automated, high-efficiency platform designed to accelerate candidate job readiness through decoupled AI services: a structural resume enhancer/generator and a contextual home assignment technical defense simulator.
 
 ---
 
-## Repository Documentation
-* **Project Handover Manual (מסמך העברת מקל):** [HANDOVER.md](file:///c:/Users/Shalev/Coding/CyberProAi/Career_Hub/HANDOVER.md)
-* **Project Roadmap & Epics (ניהול ומשימות פרויקט):** [ROADMAP.md](file:///c:/Users/Shalev/Coding/CyberProAi/Career_Hub/ROADMAP.md)
-* **Product Requirements:** [PRD.md](file:///c:/Users/Shalev/Coding/CyberProAi/Career_Hub/PRD.md)
-* **API Specifications:** [api_contracts.md](file:///c:/Users/Shalev/Coding/CyberProAi/Career_Hub/api_contracts.md)
+## 📁 Repository Documentation
+All project planning, requirements, and design documentations are located in the `docs/` directory:
+* **Product Requirements Document:** [docs/PRD.md](file:///c:/Users/Shalev/Coding/CyberProAi/Career_Hub/docs/PRD.md)
+* **Software Requirements Specification (אפיון מערכת):** [docs/SRS.docx](file:///c:/Users/Shalev/Coding/CyberProAi/Career_Hub/docs/SRS.docx)
+* **API Specifications:** [docs/api_contracts.md](file:///c:/Users/Shalev/Coding/CyberProAi/Career_Hub/docs/api_contracts.md)
+* **Project Work Journal (יומן עבודה):** [docs/JOURNAL.docx](file:///c:/Users/Shalev/Coding/CyberProAi/Career_Hub/docs/JOURNAL.docx)
 
 ---
 
-## Directory Structure
+## 🏗️ Directory Structure
 This project is structured as a **Monorepo**:
 ```
-├── backend/            # FastAPI, Python, LangChain, Vector Database
-├── frontend/           # Next.js, React, Tailwind CSS
+├── backend/            # FastAPI (Python), SQLAlchemy, Chroma DB, sqlite
+├── frontend/           # Next.js (React), Tailwind CSS
+├── docs/               # Project documents, PRD, SRS, API contracts, journal
 ├── .gitignore          # Global git ignore configurations
-├── PRD.md              # Product Requirement Document
-├── api_contracts.md    # API contracts for frontend-backend communication
 └── README.md           # This file
 ```
 
 ---
 
-## Getting Started
+## 🚀 Getting Started
 
-### Backend Setup (FastAPI)
+### 🐍 Backend Setup (FastAPI)
 1. **Navigate to backend folder:**
    ```bash
    cd backend
@@ -46,18 +46,17 @@ This project is structured as a **Monorepo**:
      source .venv/bin/activate
      ```
 4. **Install dependencies:**
-   *(Ensure requirements.txt is created during backend setup)*
    ```bash
    pip install -r requirements.txt
    ```
 5. **Run the server locally:**
    ```bash
-   uvicorn main:app --reload
+   uvicorn app.main:app --reload
    ```
 
 ---
 
-### Frontend Setup (Next.js)
+### ⚛️ Frontend Setup (Next.js)
 1. **Navigate to frontend folder:**
    ```bash
    cd frontend
@@ -73,9 +72,9 @@ This project is structured as a **Monorepo**:
 
 ---
 
-## Git Collaboration Guidelines
+## 🤝 Git Collaboration Guidelines
 
-To keep the repository clean and avoid merging conflicts, please follow these rules:
+To keep the repository clean and avoid merge conflicts, please follow these rules:
 
 ### 1. Branch Naming Conventions
 * For new features: `feature/your-feature-name` (e.g., `feature/resume-upload`)
@@ -91,5 +90,5 @@ Use clear, imperative commit messages:
 ### 3. Pull Request Process
 1. Always create a branch from `main`.
 2. Do not merge directly to `main`. Open a Pull Request (PR).
-3. Ensure the backend and frontend build successfully without errors before requesting a review.
+3. Ensure both backend and frontend build successfully without errors before requesting a review.
 4. Obtain at least one peer approval before merging.
